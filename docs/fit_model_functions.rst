@@ -396,3 +396,31 @@ spline coefficients. The model function :code:`g` exists for each x,y,z coordina
 :`p_4`: offset
 
 :`p_5`: phase
+
+
+.. _patlak-model:
+
+PATLAK model
+++++++++++++
+
+A 1D Patlak model with two parameters (``Ktrans`` and ``vp``). The model ID is ``PATLAK``.
+
+.. math::
+
+    C_t(t_k, \vec{p}) = p_0 \int_0^{t_k} C_p(\tau)\, d\tau + p_1 C_p(t_k)
+
+where the integral is evaluated numerically (trapezoidal rule) using the supplied time vector.
+
+:`p_0`: :math:`Ktrans`
+
+:`p_1`: :math:`vp`
+
+Required user information
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The PATLAK model requires :code:`user_info` containing two contiguous float arrays:
+
+- first :code:`n_points` values: time vector :math:`t`
+- next :code:`n_points` values: plasma concentration :math:`C_p(t)`
+
+Hence :code:`user_info_size` must be at least :math:`2 * n\_points * sizeof(REAL)`.

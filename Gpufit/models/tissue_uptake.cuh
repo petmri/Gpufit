@@ -12,7 +12,7 @@ __device__ REAL get_tuptake_value (
 	// integral/convolution
 	REAL convFunc = 0;
 	REAL Tp = p1 / (p2 / ((p2 / p0) - 1) + p2);
-	for (int i = 1; i < point_index; i++) {
+	for (int i = 1; i <= point_index; i++) {
 		REAL spacing = T[i] - T[i - 1];
 		REAL Ct = Cp[i] * (p2 * exp(-(T[point_index] - T[i])/Tp) + p0 * (1 - exp(-(T[point_index] - T[i])/Tp)));
 		REAL Ctprev = Cp[i - 1] * (p2 * exp(-(T[point_index] - T[i-1])/Tp) + p0 * (1 - exp(-(T[point_index] - T[i-1])/Tp)));

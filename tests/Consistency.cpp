@@ -212,16 +212,31 @@ BOOST_AUTO_TEST_CASE( Consistency )
         return;
     }
 
+	bool ran_any_case = false;
+
+#ifdef USE_BASE_MODELS
 	BOOST_TEST_MESSAGE( "linear_fit_1d" );
 	perform_cpufit_gpufit_and_check(&generate_input_linear_fit_1d);
+	ran_any_case = true;
 
 	BOOST_TEST_MESSAGE( "gauss_fit_1d" );
 	perform_cpufit_gpufit_and_check(&generate_input_gauss_fit_1d);
-
-	BOOST_TEST_MESSAGE( "gauss_fit_2d" );
-	perform_cpufit_gpufit_and_check(&generate_input_gauss_fit_2d);
+	ran_any_case = true;
 
     BOOST_TEST_MESSAGE("gauss_fit_2d_elliptic");
     perform_cpufit_gpufit_and_check(&generate_input_gauss_fit_2d_elliptic);
+    ran_any_case = true;
+#endif
+
+#ifdef USE_GAUSS2D
+	BOOST_TEST_MESSAGE( "gauss_fit_2d" );
+	perform_cpufit_gpufit_and_check(&generate_input_gauss_fit_2d);
+    ran_any_case = true;
+#endif
+
+	if (!ran_any_case)
+	{
+		BOOST_TEST_MESSAGE("Skipping consistency checks because no covered GPU models are enabled in this build configuration.");
+	}
 
 }

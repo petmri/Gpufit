@@ -1,6 +1,7 @@
 #include "cpufit.h"
 #include "../Gpufit/constants.h"
 #include "interface.h"
+#include "patlak_linear.h"
 
 #include <string>
 
@@ -116,6 +117,56 @@ catch( std::exception& exception )
     return ReturnState::ERROR;
 }
 catch( ... )
+{
+    last_error = "Unknown Error";
+
+    return ReturnState::ERROR;
+}
+
+int cpufit_patlak_bounded_linear
+(
+    std::size_t n_fits,
+    std::size_t n_points,
+    REAL* data,
+    REAL* weights,
+    REAL* initial_parameters,
+    REAL* constraints,
+    int* constraint_types,
+    int* parameters_to_fit,
+    std::size_t user_info_size,
+    char* user_info,
+    REAL* output_parameters,
+    int* output_states,
+    REAL* output_chi_squares,
+    int* output_n_iterations
+)
+try
+{
+    solve_patlak_bounded_linear(
+        n_fits,
+        n_points,
+        data,
+        weights,
+        initial_parameters,
+        constraints,
+        constraint_types,
+        parameters_to_fit,
+        user_info_size,
+        user_info,
+        output_parameters,
+        output_states,
+        output_chi_squares,
+        output_n_iterations);
+
+    return ReturnState::OK;
+}
+catch (std::exception & exception)
+{
+    last_error = exception.what();
+
+    return ReturnState::ERROR;
+}
+catch (...)
 {
     last_error = "Unknown Error";
 

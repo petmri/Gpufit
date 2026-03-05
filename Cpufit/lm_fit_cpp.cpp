@@ -6,6 +6,7 @@
 #include <numeric>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 // TODO if std::size_t and int are not the same, we will get lots of C26451 warnings here related to it, they can be ignored or
@@ -100,7 +101,7 @@ REAL tissue_uptake_get_value(
     {
         return 0.f;
     }
-    for (std::size_t i = 1; i < point_index; i++)
+    for (std::size_t i = 1; i <= point_index; i++)
     {
         REAL const spacing = time[i] - time[i - 1];
         REAL const delta_t = time[point_index] - time[i];
@@ -185,7 +186,7 @@ REAL two_compartment_exchange_get_value(
         return 0.f;
     }
 
-    for (std::size_t i = 1; i < point_index; i++)
+    for (std::size_t i = 1; i <= point_index; i++)
     {
         REAL const spacing = time[i] - time[i - 1];
         REAL const delta_t = time[point_index] - time[i];
@@ -994,7 +995,7 @@ void LMFitCPP::calc_derivatives_patlak(std::vector<REAL> & derivatives)
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
         REAL convCp = 0.f;
-        for (int i = 1; i < point_index; i++)
+        for (std::size_t i = 1; i <= point_index; i++)
         {
             REAL spacing = T[i] - T[i - 1];
             convCp += (Cp[i - 1] + Cp[i]) / 2 * spacing;
@@ -1749,7 +1750,7 @@ void LMFitCPP::calc_values_patlak(std::vector<REAL>& values)
     {
         // integral (trapezoidal rule)
         REAL convCp = 0.f;
-        for (int i = 1; i < point_index; i++) {
+        for (std::size_t i = 1; i <= point_index; i++) {
             REAL spacing = T[i] - T[i - 1];
             convCp += (Cp[i - 1] + Cp[i]) / 2 * spacing;
         }
@@ -2397,6 +2398,8 @@ void LMFitCPP::run()
         return;
 
     prev_chi_square_ = (*chi_square_);
+    REAL constrained_last_projected_step_inf_norm = std::numeric_limits<REAL>::infinity();
+    bool constrained_last_was_nonincreasing = false;
         
     for (int iteration = 0; (*state_) == 0; iteration++)
     {
@@ -2404,29 +2407,165 @@ void LMFitCPP::run()
         
         SOLVE_EQUATION_SYSTEM();
 
-        update_parameters();
-
-        if( info_.use_constraints_ )
-            project_parameters_to_box();
-
-        calc_model();
-        if (!model_buffers_finite())
+        if (info_.use_constraints_)
         {
-            *state_ = FitState::SINGULAR_HESSIAN;
-            *chi_square_ = prev_chi_square_;
-            *n_iterations_ = iteration + 1;
-            break;
+            std::vector<REAL> base_parameters(parameters_, parameters_ + info_.n_parameters_);
+            std::vector<REAL> trial_parameters(base_parameters);
+            constrained_last_projected_step_inf_norm = std::numeric_limits<REAL>::infinity();
+            constrained_last_was_nonincreasing = false;
+
+            for (int parameter_index = 0; parameter_index < info_.n_parameters_; parameter_index++)
+            {
+                if (parameters_to_fit_[parameter_index])
+                {
+                    prev_parameters_[parameter_index] = base_parameters[parameter_index];
+                }
+            }
+
+            bool has_finite_trial = false;
+            bool accepted_trial = false;
+            REAL accepted_chi_square = prev_chi_square_;
+
+            int const max_backtracking_steps = 8;
+            for (int backtracking_index = 0; backtracking_index <= max_backtracking_steps; backtracking_index++)
+            {
+                REAL const step_scale = std::pow(static_cast<REAL>(0.5f), static_cast<REAL>(backtracking_index));
+
+                trial_parameters = base_parameters;
+                for (int parameter_index = 0, delta_index = 0; parameter_index < info_.n_parameters_; parameter_index++)
+                {
+                    if (parameters_to_fit_[parameter_index])
+                    {
+                        trial_parameters[parameter_index]
+                            = base_parameters[parameter_index] + step_scale * delta_[delta_index++];
+                    }
+                }
+
+                std::copy(trial_parameters.begin(), trial_parameters.end(), parameters_);
+                project_parameters_to_box();
+
+                REAL projected_step_inf_norm = 0.f;
+                for (int parameter_index = 0; parameter_index < info_.n_parameters_; parameter_index++)
+                {
+                    if (parameters_to_fit_[parameter_index])
+                    {
+                        REAL const projected_step
+                            = std::abs(parameters_[parameter_index] - base_parameters[parameter_index]);
+                        projected_step_inf_norm = std::max(projected_step_inf_norm, projected_step);
+                    }
+                }
+
+                calc_model();
+                if (!model_buffers_finite())
+                {
+                    continue;
+                }
+
+                calc_chi_square(curve_);
+                if (!std::isfinite(*chi_square_))
+                {
+                    continue;
+                }
+
+                has_finite_trial = true;
+                constrained_last_projected_step_inf_norm = projected_step_inf_norm;
+                constrained_last_was_nonincreasing = (*chi_square_) <= prev_chi_square_;
+
+                if ((*chi_square_) < prev_chi_square_)
+                {
+                    accepted_trial = true;
+                    accepted_chi_square = *chi_square_;
+                    break;
+                }
+            }
+
+            if (!has_finite_trial)
+            {
+                *state_ = FitState::SINGULAR_HESSIAN;
+                *chi_square_ = prev_chi_square_;
+                *n_iterations_ = iteration + 1;
+                break;
+            }
+
+            if (!accepted_trial)
+            {
+                std::copy(base_parameters.begin(), base_parameters.end(), parameters_);
+                calc_model();
+                *chi_square_ = prev_chi_square_;
+            }
+            else
+            {
+                *chi_square_ = accepted_chi_square;
+            }
         }
-        calc_coefficients();
-        if (!std::isfinite(*chi_square_))
+        else
         {
-            *state_ = FitState::SINGULAR_HESSIAN;
-            *chi_square_ = prev_chi_square_;
-            *n_iterations_ = iteration + 1;
-            break;
+            update_parameters();
+        }
+
+        if (!info_.use_constraints_)
+        {
+            calc_model();
+            if (!model_buffers_finite())
+            {
+                *state_ = FitState::SINGULAR_HESSIAN;
+                *chi_square_ = prev_chi_square_;
+                *n_iterations_ = iteration + 1;
+                break;
+            }
+            calc_coefficients();
+            if (!std::isfinite(*chi_square_))
+            {
+                *state_ = FitState::SINGULAR_HESSIAN;
+                *chi_square_ = prev_chi_square_;
+                *n_iterations_ = iteration + 1;
+                break;
+            }
+        }
+        else
+        {
+            if ((*chi_square_) < prev_chi_square_)
+            {
+                calc_coefficients();
+                if (!std::isfinite(*chi_square_))
+                {
+                    *state_ = FitState::SINGULAR_HESSIAN;
+                    *chi_square_ = prev_chi_square_;
+                    *n_iterations_ = iteration + 1;
+                    break;
+                }
+            }
         }
 
         converged_ = check_for_convergence();
+        if (!converged_ && info_.use_constraints_)
+        {
+            REAL constrained_effective_tolerance = tolerance_;
+            if (info_.model_id_ == TOFTS_EXTENDED)
+            {
+                REAL const tolerance_floor = static_cast<REAL>(1e-8f);
+                constrained_effective_tolerance = std::max(constrained_effective_tolerance, tolerance_floor);
+            }
+
+            REAL const projected_step_tolerance = std::max(
+                constrained_effective_tolerance,
+                constrained_effective_tolerance * std::max(static_cast<REAL>(1.f), std::abs(parameters_[0])));
+
+            REAL const chi_square_tolerance = std::max(
+                constrained_effective_tolerance,
+                constrained_effective_tolerance * std::abs(*chi_square_));
+
+            bool const tiny_projected_step
+                = constrained_last_projected_step_inf_norm <= projected_step_tolerance;
+            bool const tiny_nonincrease
+                = constrained_last_was_nonincreasing
+                && std::abs(*chi_square_ - prev_chi_square_) <= chi_square_tolerance;
+
+            if (tiny_projected_step && tiny_nonincrease)
+            {
+                converged_ = true;
+            }
+        }
 
         evaluate_iteration(iteration);
 

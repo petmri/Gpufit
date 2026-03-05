@@ -124,9 +124,15 @@ extern __global__ void cuda_update_parameters(
 extern __global__ void cuda_check_for_convergence(
     int * finished,
     REAL const tolerance,
+    int const use_constraints,
     int * states,
     REAL const * chi_squares,
     REAL const * prev_chi_squares,
+    REAL const * parameters,
+    REAL const * prev_parameters,
+    int const n_parameters,
+    int const n_parameters_to_fit,
+    int const * parameters_to_fit_indices,
     int const iteration,
     int const max_n_iterations,
     int const n_fits);

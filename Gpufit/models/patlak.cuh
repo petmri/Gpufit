@@ -22,7 +22,7 @@ __device__ void calculate_patlak (               // function name
 	REAL* Cp = user_info_float + n_points;
 	// integral (trapezoidal rule)
 	REAL convCp = 0;
-	for (int i = 1; i < point_index; i++) {
+	for (int i = 1; i <= point_index; i++) {
 		REAL spacing = T[i] - T[i - 1];
 		convCp += (Cp[i - 1] + Cp[i]) / 2 * spacing;
 	}

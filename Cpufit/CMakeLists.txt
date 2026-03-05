@@ -7,6 +7,7 @@ set( CpuHeaders
 	info.h
 	lm_fit.h
 	interface.h
+	patlak_linear.h
 )
 
 set( CpuSources
@@ -15,6 +16,7 @@ set( CpuSources
 	lm_fit.cpp
 	lm_fit_cpp.cpp
 	interface.cpp
+	patlak_linear.cpp
 	Cpufit.def
 )
 

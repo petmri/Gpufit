@@ -351,9 +351,15 @@ void LMFitCUDA::evaluate_iteration(int const iteration)
     cuda_check_for_convergence<<< blocks, threads >>>(
         gpu_data_.finished_,
         tolerance_,
+        info_.use_constraints_ ? 1 : 0,
         gpu_data_.states_,
         gpu_data_.chi_squares_,
         gpu_data_.prev_chi_squares_,
+        gpu_data_.parameters_,
+        gpu_data_.prev_parameters_,
+        info_.n_parameters_,
+        info_.n_parameters_to_fit_,
+        gpu_data_.parameters_to_fit_indices_,
         iteration,
         info_.max_n_iterations_,
         n_fits_);

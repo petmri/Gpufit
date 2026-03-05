@@ -1147,9 +1147,15 @@ __global__ void cuda_update_state_after_solving(
 __global__ void cuda_check_for_convergence(
     int * finished,
     REAL const tolerance,
+    int const use_constraints,
     int * states,
     REAL const * chi_squares,
     REAL const * prev_chi_squares,
+    REAL const * parameters,
+    REAL const * prev_parameters,
+    int const n_parameters,
+    int const n_parameters_to_fit,
+    int const * parameters_to_fit_indices,
     int const iteration,
     int const max_n_iterations,
     int const n_fits)
@@ -1166,9 +1172,46 @@ __global__ void cuda_check_for_convergence(
         return;
     }
 
-    int const fit_found
-        = abs(chi_squares[fit_index] - prev_chi_squares[fit_index])
-        < tolerance * max(1., chi_squares[fit_index]);
+    REAL const chi_square = chi_squares[fit_index];
+    REAL const prev_chi_square = prev_chi_squares[fit_index];
+
+    int fit_found
+        = fabs(chi_square - prev_chi_square)
+        < tolerance * max(static_cast<REAL>(1.f), fabs(chi_square));
+
+    if (!fit_found && use_constraints)
+    {
+        REAL projected_step_inf_norm = 0.f;
+        REAL const * current_parameters = &parameters[fit_index * n_parameters];
+        REAL const * current_prev_parameters = &prev_parameters[fit_index * n_parameters];
+        for (int parameter_index = 0; parameter_index < n_parameters_to_fit; parameter_index++)
+        {
+            int const parameter_offset = parameters_to_fit_indices[parameter_index];
+            REAL const projected_step
+                = fabs(current_parameters[parameter_offset] - current_prev_parameters[parameter_offset]);
+            projected_step_inf_norm = max(projected_step_inf_norm, projected_step);
+        }
+
+        REAL const projected_step_tolerance
+            = max(
+                tolerance,
+                tolerance * max(static_cast<REAL>(1.f), fabs(current_parameters[0])));
+
+        REAL const chi_square_tolerance
+            = max(
+                tolerance,
+                tolerance * fabs(chi_square));
+
+        int const tiny_projected_step = projected_step_inf_norm <= projected_step_tolerance;
+        int const tiny_nonincrease
+            = (chi_square <= prev_chi_square)
+            && (fabs(chi_square - prev_chi_square) <= chi_square_tolerance);
+
+        if (tiny_projected_step && tiny_nonincrease)
+        {
+            fit_found = 1;
+        }
+    }
 
     int const max_n_iterations_reached = iteration == max_n_iterations - 1;
 

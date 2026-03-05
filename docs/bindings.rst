@@ -146,6 +146,22 @@ The signature of the :code:`fit_constrained` method (equivalent to calling the C
     1D NumPy array of length number_parameter
     Valid values are defined in gf.ConstraintType
 
+Cpufit Python PATLAK algorithm selection
+........................................
+
+The :code:`pycpufit.cpufit` binding provides an additional optional parameter
+:code:`patlak_algorithm` for :code:`fit` and :code:`fit_constrained`:
+
+- :code:`'lm'` (default): standard LM-based PATLAK fit
+- :code:`'bounded_linear'`: box-constrained weighted linear PATLAK solver
+
+Notes for :code:`'bounded_linear'`:
+
+- valid only when :code:`model_id == PATLAK`
+- valid only for :code:`estimator_id == LSE`
+- uses the same PATLAK :code:`user_info` layout described in :ref:`patlak-model`
+- respects provided box constraints (:code:`constraints`, :code:`constraint_types`)
+
 get_last_error
 ..............
 

@@ -25,7 +25,7 @@ __device__ REAL get_2cx_value (
 	REAL Kpos = 0.5 * (1/Tp + 1/Te + sqrt(pow(1/Tp + 1/Te,2) - 4 * 1/Te * 1/Tb));
 	REAL Kneg = 0.5 * (1/Tp + 1/Te - sqrt(pow(1/Tp + 1/Te,2) - 4 * 1/Te * 1/Tb));
 	REAL Eneg = (Kpos - 1/Tb) / (Kpos - Kneg);
-	for (int i = 1; i < point_index; i++) {
+	for (int i = 1; i <= point_index; i++) {
 		REAL spacing = T[i] - T[i - 1];
 		REAL Ct =     Cp[i]     * (exp(-(T[point_index] - T[i])   * Kpos) + Eneg * (exp(-(T[point_index] - T[i])   * Kneg) - exp(-(T[point_index] - T[i])   * Kpos)));//(p2 * exp(-(T[point_index] - T[i])/Tp) + p0 * (1 - exp(-(T[point_index] - T[i])/Tp)));
 		REAL Ctprev = Cp[i - 1] * (exp(-(T[point_index] - T[i-1]) * Kpos) + Eneg * (exp(-(T[point_index] - T[i-1]) * Kneg) - exp(-(T[point_index] - T[i-1]) * Kpos))); //(p2 * exp(-(T[point_index] - T[i-1])/Tp) + p0 * (1 - exp(-(T[point_index] - T[i-1])/Tp)));

@@ -3,3 +3,4 @@ EXPORTS
     cpufit @1
     cpufit_get_last_error @2
     cpufit_constrained @3
+    cpufit_patlak_bounded_linear @4

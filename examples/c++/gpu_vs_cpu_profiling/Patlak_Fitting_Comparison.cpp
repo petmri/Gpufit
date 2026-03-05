@@ -6,6 +6,7 @@
 #include <random>
 #include <iostream>
 #include <math.h>
+#include <stdexcept>
 
 void patlak_two()
 {
@@ -135,232 +136,236 @@ void patlak_two()
 	// parameters to fit (all of them)
 	std::vector< int > parameters_to_fit(n_model_parameters, 1);
 
-	// output parameters
-	std::vector< REAL > cpufit_output_parameters(n_fits * n_model_parameters);
-	std::vector< int > cpufit_output_states(n_fits);
-	std::vector< REAL > cpufit_output_chi_square(n_fits);
-	std::vector< int > cpufit_output_number_iterations(n_fits);
-
-	// call to cpufit
-	int const cpu_status = cpufit
-	(
-		n_fits,
-		n_points_per_fit,
-		data.data(),
-		0,
-		model_id,
-		initial_parameters.data(),
-		tolerance,
-		max_number_iterations,
-		parameters_to_fit.data(),
-		estimator_id,
-		user_info_size,
-		reinterpret_cast< char* >( user_info.data() ),
-		cpufit_output_parameters.data(),
-		cpufit_output_states.data(),
-		cpufit_output_chi_square.data(),
-		cpufit_output_number_iterations.data()
-	);
-
-	// check cpu_status
-	if (cpu_status != ReturnState::OK)
+	auto run_case = [&](char const* title, REAL* constraints, int* constraint_types)
 	{
-		throw std::runtime_error(cpufit_get_last_error());
-	}
+		// output parameters
+		std::vector< REAL > cpufit_output_parameters(n_fits * n_model_parameters);
+		std::vector< int > cpufit_output_states(n_fits);
+		std::vector< REAL > cpufit_output_chi_square(n_fits);
+		std::vector< int > cpufit_output_number_iterations(n_fits);
 
-	// get fit states
-	std::vector< int > cpufit_output_states_histogram(5, 0);
-	for (std::vector< int >::iterator it = cpufit_output_states.begin(); it != cpufit_output_states.end(); ++it)
-	{
-		cpufit_output_states_histogram[*it]++;
-	}
+		std::vector< REAL > gpufit_output_parameters(n_fits * n_model_parameters);
+		std::vector< int > gpufit_output_states(n_fits);
+		std::vector< REAL > gpufit_output_chi_square(n_fits);
+		std::vector< int > gpufit_output_number_iterations(n_fits);
 
-	// output parameters
-	std::vector< REAL > gpufit_output_parameters(n_fits * n_model_parameters);
-	std::vector< int > gpufit_output_states(n_fits);
-	std::vector< REAL > gpufit_output_chi_square(n_fits);
-	std::vector< int > gpufit_output_number_iterations(n_fits);
+		std::vector< REAL > cpufit_linear_output_parameters(n_fits * n_model_parameters);
+		std::vector< int > cpufit_linear_output_states(n_fits);
+		std::vector< REAL > cpufit_linear_output_chi_square(n_fits);
+		std::vector< int > cpufit_linear_output_number_iterations(n_fits);
 
-	// call to gpufit (C interface)
-	int const gpu_status = gpufit
-	(
-		n_fits,
-		n_points_per_fit,
-		data.data(),
-		0,
-		model_id,
-		initial_parameters.data(),
-		tolerance,
-		max_number_iterations,
-		parameters_to_fit.data(),
-		estimator_id,
-		user_info_size,
-		reinterpret_cast< char* >( user_info.data() ),
-		gpufit_output_parameters.data(),
-		gpufit_output_states.data(),
-		gpufit_output_chi_square.data(),
-		gpufit_output_number_iterations.data()
-	);
+		int cpu_status = ReturnState::ERROR;
+		int gpu_status = ReturnState::ERROR;
 
-
-	// check gpu_status
-	if (gpu_status != ReturnState::OK)
-	{
-		throw std::runtime_error(gpufit_get_last_error());
-	}
-
-
-	// get fit states
-	std::vector< int > gpufit_output_states_histogram(5, 0);
-	for (std::vector< int >::iterator it = gpufit_output_states.begin(); it != gpufit_output_states.end(); ++it)
-	{
-		gpufit_output_states_histogram[*it]++;
-	}
-
-	std::cout << "ratio converged              " << "GPU: " << (REAL)gpufit_output_states_histogram[0] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[0] / n_fits << "\n";
-	std::cout << "ratio max iteration exceeded " << "GPU: " << (REAL)gpufit_output_states_histogram[1] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[1] / n_fits << "\n";
-	std::cout << "ratio singular hessian       " << "GPU: " << (REAL)gpufit_output_states_histogram[2] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[2] / n_fits << "\n";
-	std::cout << "ratio neg curvature MLE      " << "GPU: " << (REAL)gpufit_output_states_histogram[3] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[3] / n_fits << "\n";
-	std::cout << "ratio gpu not read           " << "GPU: " << (REAL)gpufit_output_states_histogram[4] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[4] / n_fits << "\n";
-
-	// CPU
-	// compute mean fitted parameters for converged fits
-	std::vector< REAL > cpufit_output_parameters_mean(n_model_parameters, 0);
-	std::vector< REAL > cpufit_output_parameters_mean_error(n_model_parameters, 0);
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (gpufit_output_states[i] == FitState::CONVERGED)
+		if (constraints && constraint_types)
 		{
-			// add Ktrans
-			cpufit_output_parameters_mean[0] += cpufit_output_parameters[i * n_model_parameters + 0];
-			// add vp
-			cpufit_output_parameters_mean[1] += cpufit_output_parameters[i * n_model_parameters + 1];
-			// add Ktrans
-			cpufit_output_parameters_mean_error[0] += abs(cpufit_output_parameters[i * n_model_parameters + 0]-true_parameters[0]);
-			// add vp
-			cpufit_output_parameters_mean_error[1] += abs(cpufit_output_parameters[i * n_model_parameters + 1]-true_parameters[1]);
-		}
-	}
-	cpufit_output_parameters_mean[0] /= cpufit_output_states_histogram[0];
-	cpufit_output_parameters_mean[1] /= cpufit_output_states_histogram[0];
+			cpu_status = cpufit_constrained(
+				n_fits,
+				n_points_per_fit,
+				data.data(),
+				0,
+				model_id,
+				initial_parameters.data(),
+				constraints,
+				constraint_types,
+				tolerance,
+				max_number_iterations,
+				parameters_to_fit.data(),
+				estimator_id,
+				user_info_size,
+				reinterpret_cast< char* >( user_info.data() ),
+				cpufit_output_parameters.data(),
+				cpufit_output_states.data(),
+				cpufit_output_chi_square.data(),
+				cpufit_output_number_iterations.data());
 
-	// compute std of fitted parameters for converged fits
-	std::vector< REAL > cpufit_output_parameters_std(n_model_parameters, 0);
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (cpufit_output_states[i] == FitState::CONVERGED)
+			gpu_status = gpufit_constrained(
+				n_fits,
+				n_points_per_fit,
+				data.data(),
+				0,
+				model_id,
+				initial_parameters.data(),
+				constraints,
+				constraint_types,
+				tolerance,
+				max_number_iterations,
+				parameters_to_fit.data(),
+				estimator_id,
+				user_info_size,
+				reinterpret_cast< char* >( user_info.data() ),
+				gpufit_output_parameters.data(),
+				gpufit_output_states.data(),
+				gpufit_output_chi_square.data(),
+				gpufit_output_number_iterations.data());
+		}
+		else
 		{
-			// add squared deviation for Ktrans
-			cpufit_output_parameters_std[0] += (cpufit_output_parameters[i * n_model_parameters + 0] - cpufit_output_parameters_mean[0]) * (cpufit_output_parameters[i * n_model_parameters + 0] - cpufit_output_parameters_mean[0]);
-			// add squared deviation for vp
-			cpufit_output_parameters_std[1] += (cpufit_output_parameters[i * n_model_parameters + 1] - cpufit_output_parameters_mean[1]) * (cpufit_output_parameters[i * n_model_parameters + 1] - cpufit_output_parameters_mean[1]);
-		}
-	}
-	// divide and take square root
-	cpufit_output_parameters_std[0] = sqrt(cpufit_output_parameters_std[0] / cpufit_output_states_histogram[0]);
-	cpufit_output_parameters_std[1] = sqrt(cpufit_output_parameters_std[1] / cpufit_output_states_histogram[0]);
+			cpu_status = cpufit(
+				n_fits,
+				n_points_per_fit,
+				data.data(),
+				0,
+				model_id,
+				initial_parameters.data(),
+				tolerance,
+				max_number_iterations,
+				parameters_to_fit.data(),
+				estimator_id,
+				user_info_size,
+				reinterpret_cast< char* >( user_info.data() ),
+				cpufit_output_parameters.data(),
+				cpufit_output_states.data(),
+				cpufit_output_chi_square.data(),
+				cpufit_output_number_iterations.data());
 
-	// GPU
-	// compute mean fitted parameters for converged fits
-	std::vector< REAL > gpufit_output_parameters_mean(n_model_parameters, 0);
-	std::vector< REAL > gpufit_output_parameters_mean_error(n_model_parameters, 0);
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (gpufit_output_states[i] == FitState::CONVERGED)
+			gpu_status = gpufit(
+				n_fits,
+				n_points_per_fit,
+				data.data(),
+				0,
+				model_id,
+				initial_parameters.data(),
+				tolerance,
+				max_number_iterations,
+				parameters_to_fit.data(),
+				estimator_id,
+				user_info_size,
+				reinterpret_cast< char* >( user_info.data() ),
+				gpufit_output_parameters.data(),
+				gpufit_output_states.data(),
+				gpufit_output_chi_square.data(),
+				gpufit_output_number_iterations.data());
+		}
+
+		int const cpu_linear_status = cpufit_patlak_bounded_linear(
+			n_fits,
+			n_points_per_fit,
+			data.data(),
+			0,
+			initial_parameters.data(),
+			constraints,
+			constraint_types,
+			parameters_to_fit.data(),
+			user_info_size,
+			reinterpret_cast< char* >( user_info.data() ),
+			cpufit_linear_output_parameters.data(),
+			cpufit_linear_output_states.data(),
+			cpufit_linear_output_chi_square.data(),
+			cpufit_linear_output_number_iterations.data());
+
+		if (cpu_status != ReturnState::OK)
 		{
-			// add Ktrans
-			gpufit_output_parameters_mean[0] += gpufit_output_parameters[i * n_model_parameters + 0];
-			// add vp
-			gpufit_output_parameters_mean[1] += gpufit_output_parameters[i * n_model_parameters + 1];
-			// add Ktrans
-			gpufit_output_parameters_mean_error[0] += abs(gpufit_output_parameters[i * n_model_parameters + 0]-true_parameters[0]);
-			// add vp
-			gpufit_output_parameters_mean_error[1] += abs(gpufit_output_parameters[i * n_model_parameters + 1]-true_parameters[1]);
+			throw std::runtime_error(cpufit_get_last_error());
 		}
-	}
-	gpufit_output_parameters_mean[0] /= gpufit_output_states_histogram[0];
-	gpufit_output_parameters_mean[1] /= gpufit_output_states_histogram[0];
-
-	// compute std of fitted parameters for converged fits
-	std::vector< REAL > gpufit_output_parameters_std(n_model_parameters, 0);
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (gpufit_output_states[i] == FitState::CONVERGED)
+		if (gpu_status != ReturnState::OK)
 		{
-			// add squared deviation for Ktrans
-			gpufit_output_parameters_std[0] += (gpufit_output_parameters[i * n_model_parameters + 0] - gpufit_output_parameters_mean[0]) * (gpufit_output_parameters[i * n_model_parameters + 0] - gpufit_output_parameters_mean[0]);
-			// add squared deviation for vp
-			gpufit_output_parameters_std[1] += (gpufit_output_parameters[i * n_model_parameters + 1] - gpufit_output_parameters_mean[1]) * (gpufit_output_parameters[i * n_model_parameters + 1] - gpufit_output_parameters_mean[1]);
+			throw std::runtime_error(gpufit_get_last_error());
 		}
-	}
-	// divide and take square root
-	gpufit_output_parameters_std[0] = sqrt(gpufit_output_parameters_std[0] / gpufit_output_states_histogram[0]);
-	gpufit_output_parameters_std[1] = sqrt(gpufit_output_parameters_std[1] / gpufit_output_states_histogram[0]);
-
-	// print mean and std
-	std::cout << "CPU Ktrans  true " << true_parameters[0] << " mean " << cpufit_output_parameters_mean[0] << " std " << cpufit_output_parameters_std[0] << "\n";
-	std::cout << "GPU Ktrans  true " << true_parameters[0] << " mean " << gpufit_output_parameters_mean[0] << " std " << gpufit_output_parameters_std[0] << "\n";
-	std::cout << "CPU vp	true " << true_parameters[1] << " mean " << cpufit_output_parameters_mean[1] << " std " << cpufit_output_parameters_std[1] << "\n";
-	std::cout << "GPU vp	true " << true_parameters[1] << " mean " << gpufit_output_parameters_mean[1] << " std " << gpufit_output_parameters_std[1] << "\n";
-
-	// compute CPU mean chi-square for those converged
-	REAL  cpufit_output_chi_square_mean = 0;
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (cpufit_output_states[i] == FitState::CONVERGED)
+		if (cpu_linear_status != ReturnState::OK)
 		{
-			cpufit_output_chi_square_mean += cpufit_output_chi_square[i];
+			throw std::runtime_error(cpufit_get_last_error());
 		}
-	}
-	cpufit_output_chi_square_mean /= static_cast<REAL>(cpufit_output_states_histogram[0]);
-	std::cout << "CPU mean chi square " << cpufit_output_chi_square_mean << "\n";
 
-	// compute GPU mean chi-square for those converged
-	REAL  gpufit_output_chi_square_mean = 0;
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (gpufit_output_states[i] == FitState::CONVERGED)
+		std::vector< int > cpufit_output_states_histogram(5, 0);
+		for (std::vector< int >::iterator it = cpufit_output_states.begin(); it != cpufit_output_states.end(); ++it)
 		{
-			gpufit_output_chi_square_mean += gpufit_output_chi_square[i];
+			cpufit_output_states_histogram[*it]++;
 		}
-	}
-	gpufit_output_chi_square_mean /= static_cast<REAL>(gpufit_output_states_histogram[0]);
-	std::cout << "GPU mean chi square " << gpufit_output_chi_square_mean << "\n";
-	// GPU
-	// compute mean number of iterations for those converged
-	REAL  cpufit_output_number_iterations_mean = 0;
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (cpufit_output_states[i] == FitState::CONVERGED)
+
+		std::vector< int > gpufit_output_states_histogram(5, 0);
+		for (std::vector< int >::iterator it = gpufit_output_states.begin(); it != gpufit_output_states.end(); ++it)
 		{
-			cpufit_output_number_iterations_mean += static_cast<REAL>(cpufit_output_number_iterations[i]);
+			gpufit_output_states_histogram[*it]++;
 		}
-	}
 
-	// normalize
-	cpufit_output_number_iterations_mean /= static_cast<REAL>(cpufit_output_states_histogram[0]);
-	std::cout << "CPU mean number of iterations " << cpufit_output_number_iterations_mean << "\n";
-
-	// GPU
-	// compute mean number of iterations for those converged
-	REAL  gpufit_output_number_iterations_mean = 0;
-	for (size_t i = 0; i != n_fits; i++)
-	{
-		if (gpufit_output_states[i] == FitState::CONVERGED)
+		std::vector< int > cpufit_linear_output_states_histogram(5, 0);
+		for (std::vector< int >::iterator it = cpufit_linear_output_states.begin(); it != cpufit_linear_output_states.end(); ++it)
 		{
-			gpufit_output_number_iterations_mean += static_cast<REAL>(gpufit_output_number_iterations[i]);
+			cpufit_linear_output_states_histogram[*it]++;
 		}
-	}
 
-	// normalize
-	gpufit_output_number_iterations_mean /= static_cast<REAL>(gpufit_output_states_histogram[0]);
-	std::cout << "GPU mean number of iterations " << gpufit_output_number_iterations_mean << "\n";
+		std::cout << "\n" << title << "\n";
+		std::cout << "ratio converged              GPU: " << (REAL)gpufit_output_states_histogram[0] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[0] / n_fits << " CPU-linear: " << (REAL)cpufit_linear_output_states_histogram[0] / n_fits << "\n";
+		std::cout << "ratio max iteration exceeded GPU: " << (REAL)gpufit_output_states_histogram[1] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[1] / n_fits << " CPU-linear: " << (REAL)cpufit_linear_output_states_histogram[1] / n_fits << "\n";
+		std::cout << "ratio singular hessian       GPU: " << (REAL)gpufit_output_states_histogram[2] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[2] / n_fits << " CPU-linear: " << (REAL)cpufit_linear_output_states_histogram[2] / n_fits << "\n";
+		std::cout << "ratio neg curvature MLE      GPU: " << (REAL)gpufit_output_states_histogram[3] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[3] / n_fits << " CPU-linear: " << (REAL)cpufit_linear_output_states_histogram[3] / n_fits << "\n";
+		std::cout << "ratio gpu not read           GPU: " << (REAL)gpufit_output_states_histogram[4] / n_fits << " CPU: " << (REAL)cpufit_output_states_histogram[4] / n_fits << " CPU-linear: " << (REAL)cpufit_linear_output_states_histogram[4] / n_fits << "\n";
+
+		auto print_stats = [&](char const* name, std::vector< REAL > const& parameters, std::vector< int > const& states, std::vector< REAL > const& chi_square, std::vector< int > const& n_iterations)
+		{
+			REAL mean_ktrans = 0.f;
+			REAL mean_vp = 0.f;
+			int converged_count = 0;
+			for (size_t i = 0; i != n_fits; i++)
+			{
+				if (states[i] == FitState::CONVERGED)
+				{
+					mean_ktrans += parameters[i * n_model_parameters + 0];
+					mean_vp += parameters[i * n_model_parameters + 1];
+					converged_count++;
+				}
+			}
+
+			if (converged_count == 0)
+			{
+				std::cout << name << " no converged fits\n";
+				return;
+			}
+
+			mean_ktrans /= static_cast<REAL>(converged_count);
+			mean_vp /= static_cast<REAL>(converged_count);
+
+			REAL std_ktrans = 0.f;
+			REAL std_vp = 0.f;
+			REAL mean_chi_square = 0.f;
+			REAL mean_number_iterations = 0.f;
+			for (size_t i = 0; i != n_fits; i++)
+			{
+				if (states[i] == FitState::CONVERGED)
+				{
+					std_ktrans += (parameters[i * n_model_parameters + 0] - mean_ktrans) * (parameters[i * n_model_parameters + 0] - mean_ktrans);
+					std_vp += (parameters[i * n_model_parameters + 1] - mean_vp) * (parameters[i * n_model_parameters + 1] - mean_vp);
+					mean_chi_square += chi_square[i];
+					mean_number_iterations += static_cast<REAL>(n_iterations[i]);
+				}
+			}
+
+			std_ktrans = sqrt(std_ktrans / static_cast<REAL>(converged_count));
+			std_vp = sqrt(std_vp / static_cast<REAL>(converged_count));
+			mean_chi_square /= static_cast<REAL>(converged_count);
+			mean_number_iterations /= static_cast<REAL>(converged_count);
+
+			std::cout << name << " Ktrans true " << true_parameters[0] << " mean " << mean_ktrans << " std " << std_ktrans << "\n";
+			std::cout << name << " vp true " << true_parameters[1] << " mean " << mean_vp << " std " << std_vp << "\n";
+			std::cout << name << " mean chi square " << mean_chi_square << "\n";
+			std::cout << name << " mean number of iterations " << mean_number_iterations << "\n";
+		};
+
+		print_stats("GPU", gpufit_output_parameters, gpufit_output_states, gpufit_output_chi_square, gpufit_output_number_iterations);
+		print_stats("CPU", cpufit_output_parameters, cpufit_output_states, cpufit_output_chi_square, cpufit_output_number_iterations);
+		print_stats("CPU-linear", cpufit_linear_output_parameters, cpufit_linear_output_states, cpufit_linear_output_chi_square, cpufit_linear_output_number_iterations);
+	};
+
+	run_case("UNCONSTRAINED PATLAK", 0, 0);
+
+	std::vector< REAL > constraints(n_fits * 2 * n_model_parameters, 0.f);
+	for (size_t i = 0; i < n_fits; i++)
+	{
+		constraints[i * 4 + 0] = 0.0f;
+		constraints[i * 4 + 1] = 0.2f;
+		constraints[i * 4 + 2] = 0.0f;
+		constraints[i * 4 + 3] = 0.2f;
+	}
+	std::vector< int > constraint_types{ ConstraintType::LOWER_UPPER, ConstraintType::LOWER_UPPER };
+
+	run_case("CONSTRAINED PATLAK", constraints.data(), constraint_types.data());
 
 	// time
 	//time(&time_end);
 	time_end = clock();
 	double time_taken_sec = double(time_end-time_start)/double(CLOCKS_PER_SEC);
-	std::cout << "execution time for " << n_fits << " fits was " << time_taken_sec << " seconds\n";
+	std::cout << "\nexecution time for " << n_fits << " fits (two scenarios) was " << time_taken_sec << " seconds\n";
 }
 
 

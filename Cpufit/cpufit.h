@@ -59,6 +59,24 @@ VISIBLE int cpufit_constrained
     int* output_n_iterations
 );
 
+VISIBLE int cpufit_patlak_bounded_linear
+(
+    std::size_t n_fits,
+    std::size_t n_points,
+    REAL* data,
+    REAL* weights,
+    REAL* initial_parameters,
+    REAL* constraints,
+    int* constraint_types,
+    int* parameters_to_fit,
+    std::size_t user_info_size,
+    char* user_info,
+    REAL* output_parameters,
+    int* output_states,
+    REAL* output_chi_squares,
+    int* output_n_iterations
+);
+
 VISIBLE char const * cpufit_get_last_error() ;
 
 #ifdef __cplusplus

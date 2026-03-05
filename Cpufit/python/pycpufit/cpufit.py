@@ -56,6 +56,30 @@ cpufit_func.argtypes = [
     POINTER(c_int),
 ]
 
+try:
+    cpufit_patlak_bounded_linear_func = lib.cpufit_patlak_bounded_linear
+except AttributeError:
+    cpufit_patlak_bounded_linear_func = None
+
+if cpufit_patlak_bounded_linear_func is not None:
+    cpufit_patlak_bounded_linear_func.restype = c_int
+    cpufit_patlak_bounded_linear_func.argtypes = [
+        c_size_t,
+        c_size_t,
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_int),
+        POINTER(c_int),
+        c_size_t,
+        POINTER(c_char),
+        POINTER(c_float),
+        POINTER(c_int),
+        POINTER(c_float),
+        POINTER(c_int),
+    ]
+
 # cpufit_get_last_error function in the library
 error_func = lib.cpufit_get_last_error
 error_func.restype = c_char_p
@@ -175,6 +199,7 @@ def fit(
     parameters_to_fit=None,
     estimator_id=None,
     user_info=None,
+    patlak_algorithm='lm',
 ):
     """Calls fit_constrained without constraints."""
 
@@ -190,6 +215,7 @@ def fit(
         parameters_to_fit=parameters_to_fit,
         estimator_id=estimator_id,
         user_info=user_info,
+        patlak_algorithm=patlak_algorithm,
     )
 
 
@@ -205,6 +231,7 @@ def fit_constrained(
     parameters_to_fit=None,
     estimator_id=None,
     user_info=None,
+    patlak_algorithm='lm',
 ):
     """
     Calls the C interface fit function in the Cpufit library.
@@ -285,6 +312,10 @@ def fit_constrained(
     if not all(_valid_id(ConstraintType, item) for item in constraint_types):
         raise RuntimeError('Invalid constraint type, use an attribute of ConstraintType')
 
+    patlak_algorithm_normalized = str(patlak_algorithm).strip().lower()
+    if patlak_algorithm_normalized not in {'lm', 'bounded_linear'}:
+        raise RuntimeError("patlak_algorithm must be either 'lm' or 'bounded_linear'")
+
     if user_info is not None:
         user_info_size = user_info.nbytes
     else:
@@ -310,28 +341,58 @@ def fit_constrained(
     else:
         user_info_p = None
 
+    use_patlak_bounded_linear = (
+        model_id == ModelID.PATLAK and patlak_algorithm_normalized == 'bounded_linear'
+    )
+    if use_patlak_bounded_linear:
+        if cpufit_patlak_bounded_linear_func is None:
+            raise RuntimeError(
+                "Cpufit library does not export 'cpufit_patlak_bounded_linear'. "
+                "Rebuild/install the updated Cpufit binary to use patlak_algorithm='bounded_linear'."
+            )
+        if estimator_id != EstimatorID.LSE:
+            raise RuntimeError("patlak_algorithm='bounded_linear' supports only estimator_id=LSE")
+
     # call into the library (measure time)
     t0 = time.perf_counter()
-    status = cpufit_func(
-        cpufit_func.argtypes[0](number_fits),
-        cpufit_func.argtypes[1](number_points),
-        data.ctypes.data_as(cpufit_func.argtypes[2]),
-        weights_p,
-        cpufit_func.argtypes[4](model_id),
-        initial_parameters.ctypes.data_as(cpufit_func.argtypes[5]),
-        constraints_p,
-        constraint_types.ctypes.data_as(cpufit_func.argtypes[7]),
-        cpufit_func.argtypes[8](tolerance),
-        cpufit_func.argtypes[9](max_number_iterations),
-        parameters_to_fit.ctypes.data_as(cpufit_func.argtypes[10]),
-        cpufit_func.argtypes[11](estimator_id),
-        cpufit_func.argtypes[12](user_info_size),
-        user_info_p,
-        parameters.ctypes.data_as(cpufit_func.argtypes[14]),
-        states.ctypes.data_as(cpufit_func.argtypes[15]),
-        chi_squares.ctypes.data_as(cpufit_func.argtypes[16]),
-        number_iterations.ctypes.data_as(cpufit_func.argtypes[17]),
-    )
+    if use_patlak_bounded_linear:
+        status = cpufit_patlak_bounded_linear_func(
+            cpufit_patlak_bounded_linear_func.argtypes[0](number_fits),
+            cpufit_patlak_bounded_linear_func.argtypes[1](number_points),
+            data.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[2]),
+            weights_p,
+            initial_parameters.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[4]),
+            constraints_p,
+            constraint_types.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[6]),
+            parameters_to_fit.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[7]),
+            cpufit_patlak_bounded_linear_func.argtypes[8](user_info_size),
+            user_info_p,
+            parameters.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[10]),
+            states.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[11]),
+            chi_squares.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[12]),
+            number_iterations.ctypes.data_as(cpufit_patlak_bounded_linear_func.argtypes[13]),
+        )
+    else:
+        status = cpufit_func(
+            cpufit_func.argtypes[0](number_fits),
+            cpufit_func.argtypes[1](number_points),
+            data.ctypes.data_as(cpufit_func.argtypes[2]),
+            weights_p,
+            cpufit_func.argtypes[4](model_id),
+            initial_parameters.ctypes.data_as(cpufit_func.argtypes[5]),
+            constraints_p,
+            constraint_types.ctypes.data_as(cpufit_func.argtypes[7]),
+            cpufit_func.argtypes[8](tolerance),
+            cpufit_func.argtypes[9](max_number_iterations),
+            parameters_to_fit.ctypes.data_as(cpufit_func.argtypes[10]),
+            cpufit_func.argtypes[11](estimator_id),
+            cpufit_func.argtypes[12](user_info_size),
+            user_info_p,
+            parameters.ctypes.data_as(cpufit_func.argtypes[14]),
+            states.ctypes.data_as(cpufit_func.argtypes[15]),
+            chi_squares.ctypes.data_as(cpufit_func.argtypes[16]),
+            number_iterations.ctypes.data_as(cpufit_func.argtypes[17]),
+        )
     t1 = time.perf_counter()
 
     if status != Status.Ok:

@@ -4,6 +4,7 @@
 
 #include <boost/test/included/unit_test.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -208,9 +209,9 @@ BOOST_AUTO_TEST_CASE(PatlakCpuConstrainedGlobalAndLinear)
         BOOST_CHECK(lm_states[fit_index] == FitState::CONVERGED);
         BOOST_CHECK(linear_states[fit_index] == FitState::CONVERGED);
         REAL const chi_square_delta = std::abs(lm_chi_square[fit_index] - linear_chi_square[fit_index]);
-        REAL const chi_square_tol = std::max(
+        REAL const chi_square_tol = (std::max)(
             static_cast<REAL>(1e-6f),
-            static_cast<REAL>(1e-3f) * std::max(std::abs(linear_chi_square[fit_index]), static_cast<REAL>(1.f)));
+            static_cast<REAL>(1e-3f) * (std::max)(std::abs(linear_chi_square[fit_index]), static_cast<REAL>(1.f)));
         BOOST_CHECK(chi_square_delta <= chi_square_tol);
         BOOST_CHECK(std::abs(lm_parameters[fit_index * 2 + 0] - linear_parameters[fit_index * 2 + 0]) < 2e-4f);
         BOOST_CHECK(std::abs(lm_parameters[fit_index * 2 + 1] - linear_parameters[fit_index * 2 + 1]) < 2e-4f);

@@ -2403,8 +2403,13 @@ void LMFitCPP::run()
         
     for (int iteration = 0; (*state_) == 0; iteration++)
     {
+        // Whether this iteration's step was actually accepted (chi-square strictly
+        // decreased). A rejected step leaves chi-square equal to the previous value,
+        // which must NOT be mistaken for convergence (see convergence check below).
+        bool step_accepted = false;
+
         modify_step_width();
-        
+
         SOLVE_EQUATION_SYSTEM();
 
         if (info_.use_constraints_)
@@ -2497,6 +2502,7 @@ void LMFitCPP::run()
             {
                 *chi_square_ = accepted_chi_square;
             }
+            step_accepted = accepted_trial;
         }
         else
         {
@@ -2537,7 +2543,22 @@ void LMFitCPP::run()
             }
         }
 
-        converged_ = check_for_convergence();
+        if (info_.use_constraints_)
+        {
+            // A rejected step leaves chi-square equal to the previous value, so the
+            // chi-square-difference test would spuriously report CONVERGED (with the
+            // parameters still at their starting guess) before damping has ever been
+            // increased. Only honor the chi-square criterion after a step that was
+            // actually accepted. A genuine constrained stationary point is still
+            // detected by the projected-step / non-increase test below, which fires
+            // once lambda has grown enough that even the smallest trial step is
+            // negligible.
+            converged_ = step_accepted && check_for_convergence();
+        }
+        else
+        {
+            converged_ = check_for_convergence();
+        }
         if (!converged_ && info_.use_constraints_)
         {
             REAL constrained_effective_tolerance = tolerance_;

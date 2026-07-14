@@ -32,8 +32,8 @@ jobs:
             arch: x64
             with_cuda: true
             cuda: "12.8.1"
-            visual_studio: "Visual Studio 17 2022"
-            vc_toolset: "v170"
+            visual_studio: "Visual Studio 18 2026"
+            vc_toolset: "v180"
             python: "3.12"
 
           # Linux: old/new supported runner + old/new CUDA
@@ -61,6 +61,14 @@ jobs:
             with_cuda: false
             cuda: "cpu"
             python: "3.10"
+            # release: latest resolves to R2026a, and MathWorks confirms R2025b was the last
+            # MATLAB release to support Intel Macs (R2026a+ is Apple Silicon only) -- see
+            # https://www.mathworks.com/support/requirements/platform-road-map.html. Pin this
+            # leg to the last Intel-supported release instead of "latest". matlab_optional
+            # still guards the step (continue-on-error) as a safety net in case a future
+            # release bump on the other legs' "latest" silently regresses this pin too.
+            matlab_release: "R2025b"
+            matlab_optional: true
 
           - os: macos-14
             arch: arm64
@@ -90,6 +98,9 @@ jobs:
 
       - name: Setup MATLAB
         uses: matlab-actions/setup-matlab@v2.6.1
+        continue-on-error: ${{ matrix.matlab_optional == true }}
+        with:
+          release: ${{ matrix.matlab_release || 'latest' }}
 
       - name: Setup Java
         if: matrix.with_cuda

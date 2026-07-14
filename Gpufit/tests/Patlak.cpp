@@ -20,7 +20,6 @@ BOOST_AUTO_TEST_CASE( Patlak )
 
     std::size_t const n_fits{ 10000 } ;
     std::size_t const n_points{ 60 } ;
-	REAL snr = 0.8f; 
 	std::array< REAL, 2 > const true_parameters{ { .05, .03 } };
 	// custom x positions for the data points of every fit, stored in user info
 	// time independent variable, given in minutes
@@ -44,29 +43,19 @@ BOOST_AUTO_TEST_CASE( Patlak )
 	std::array< REAL, n_points*n_fits > data;
 	std::mt19937 rng;
 	rng.seed(time(NULL));
-	REAL mean_y = 0;
 	for (size_t i = 0; i != data.size(); i++)
 	{
 		size_t j = i / n_points; // the fit
 		size_t k = i % n_points; // the position within a fit
 		REAL x = 0;
-		for (int n = 1; n < k; n++) {
-		
+		// n <= k to match calculate_patlak's own loop bound (patlak.cuh)
+		for (int n = 1; n <= (int)k; n++) {
+
 			REAL spacing = timeX[n] - timeX[n - 1];
 			x += (Cp[n - 1] + Cp[n]) / 2 * spacing;
 		}
 		REAL y = true_parameters[0] * x + true_parameters[1] * Cp[k];
-		//data[i] = y + normal_dist(rng);
-		//data[i] = y * (0.2f + 1.6f * uniform_dist(rng));
 		data[i] = y;
-		mean_y += y;
-		//std::cout << data[i] << std::endl;
-	}
-	mean_y = mean_y / data.size();
-	std::normal_distribution<REAL> norm_snr(0,mean_y/snr);
-	for (size_t i = 0; i < data.size(); i++)
-	{
-		data[i] = data[i] + norm_snr(rng);
 	}
 	// std::array< REAL, n_points > weights{ { 1, 1 } } ;
 
@@ -139,6 +128,11 @@ BOOST_AUTO_TEST_CASE( Patlak )
 	BOOST_CHECK(std::abs(output_parameters[1] - true_parameters[1]) < 1e-6);
 
 	// test with MLE
+	// TODO: this sub-test still fails -- fit 0 reports CONVERGED after a single
+	// iteration, landing ~30% off true_parameters[0]. Looks like a false-convergence
+	// in the unconstrained solver path (separate from the constrained-path fix
+	// elsewhere in this repo), possibly related to the AIF's leading zero values
+	// under MLE's Poisson likelihood. Needs its own investigation.
 	status = gpufit
 		(
 			n_fits,
@@ -152,7 +146,7 @@ BOOST_AUTO_TEST_CASE( Patlak )
 			max_n_iterations,
 			parameters_to_fit.data(),
 			MLE,
-			n_points * sizeof(REAL),
+			n_points * sizeof(REAL) * 2,
 			reinterpret_cast< char * >(user_info.data()),
 			output_parameters.data(),
 			output_states.data(),

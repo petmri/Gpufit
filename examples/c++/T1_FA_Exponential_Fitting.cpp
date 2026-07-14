@@ -39,9 +39,9 @@ void t1_fa_exponential_two()
 	size_t const n_model_parameters = 2;
 	REAL snr = 10;
 
-	// custom x positions for the data points of every fit, stored in user info
-	// variable flip angle, given in degrees
-	REAL theta[] = { 2*M_PI/180, 5*M_PI/180, 10*M_PI/180, 12*M_PI/180, 15*M_PI/180 };
+	// variable flip angle, in degrees. The model converts to radians itself
+	// (T1_fa_fit.cuh), so passing pre-converted radians here double-converts them.
+	REAL theta_degrees[] = { 2, 5, 10, 12, 15 };
 
 	// Time resolution (constant)
 	REAL tr[] =   {	21.572f, 21.572f, 21.572f, 21.572f, 21.572f };
@@ -50,7 +50,7 @@ void t1_fa_exponential_two()
 	std::vector< REAL > user_info(2 * n_points_per_fit);
 	for (size_t i = 0; i < n_points_per_fit; i++)
 	{
-		user_info[i] = static_cast<REAL>(theta[i]);
+		user_info[i] = static_cast<REAL>(theta_degrees[i]);
 	}
 
 	for (size_t i = n_points_per_fit; i < 2 * n_points_per_fit; i++)
@@ -94,7 +94,8 @@ void t1_fa_exponential_two()
 //			x += (tr[n - 1] + tr[n]) / 2 * spacing;
 //		}
 //		REAL y = true_parameters[0] * x + true_parameters[1] * tr[k];
-		REAL y = true_parameters[0] * ( (1 - exp(-tr[k]/true_parameters[1])) * sin(theta[k])) / (1 - exp(-tr[k]/true_parameters[1]) * cos(theta[k]) );
+		REAL const theta_rad = theta_degrees[k] * static_cast<REAL>(M_PI) / 180.0f;
+		REAL y = true_parameters[0] * ( (1 - exp(-tr[k]/true_parameters[1])) * sin(theta_rad)) / (1 - exp(-tr[k]/true_parameters[1]) * cos(theta_rad) );
 		//data[i] = y + normal_dist(rng);
 		//data[i] = y * (0.2f + 1.6f * uniform_dist(rng));
 		data[i] = y;

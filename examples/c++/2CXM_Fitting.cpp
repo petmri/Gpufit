@@ -81,18 +81,20 @@ void two_compartment_exchange_four()
 	std::uniform_real_distribution< REAL > uniform_dist(0, 1);
 	std::normal_distribution< REAL > normal_dist(0, 1);
 
-	// initial parameters (randomized)
+	// initial parameters (randomized). parameter[0] is E = Ktrans/Fp, not raw
+	// Ktrans (see two-compartment_exchange.cuh) -- must convert through E.
 	std::vector< REAL > initial_parameters(n_fits * n_model_parameters);
 	for (size_t i = 0; i != n_fits; i++)
 	{
-		// random Ktrans
-		initial_parameters[i * n_model_parameters + 0] = true_parameters[0] * (0.95f + 0.1f * uniform_dist(rng));
+		// random Ktrans, Fp -- then derive the E the model actually fits
+		REAL const ktrans_init = true_parameters[0] * (0.95f + 0.1f * uniform_dist(rng));
+		REAL const fp_init = true_parameters[3] * (0.95f + 0.1f * uniform_dist(rng));
 		// random ve
 		initial_parameters[i * n_model_parameters + 1] = true_parameters[1] * (0.95f + 0.1f * uniform_dist(rng));
 		// random vp
 		initial_parameters[i * n_model_parameters + 2] = true_parameters[2] * (0.95f + 0.1f * uniform_dist(rng));
-		// random Fp
-		initial_parameters[i * n_model_parameters + 3] = true_parameters[3] * (0.95f + 0.1f * uniform_dist(rng));
+		initial_parameters[i * n_model_parameters + 0] = ktrans_init / fp_init;
+		initial_parameters[i * n_model_parameters + 3] = fp_init;
 	}
 
 	// parameter_constraints
@@ -100,9 +102,9 @@ void two_compartment_exchange_four()
 	std::vector< int > constraint_type(n_fits * n_model_parameters);
 	for (size_t i = 0; i != n_fits; i++)
 	{
-		// Ktrans
-		parameter_constraints[i * n_model_parameters * 2 + 0] = 0;
-		parameter_constraints[i * n_model_parameters * 2 + 1] = 2;
+		// E = Ktrans/Fp, bounded in (0, 1)
+		parameter_constraints[i * n_model_parameters * 2 + 0] = 1e-6f;
+		parameter_constraints[i * n_model_parameters * 2 + 1] = 1.0f - 1e-6f;
 		// ve
 		parameter_constraints[i * n_model_parameters * 2 + 2] = 0.02;
 		parameter_constraints[i * n_model_parameters * 2 + 3] = 1;
@@ -135,11 +137,14 @@ void two_compartment_exchange_four()
 		REAL Kpos = 0.5 * (1/Tp + 1/Te + sqrt(pow(1/Tp + 1/Te,2) - 4 * 1/Te * 1/Tb));
 		REAL Kneg = 0.5 * (1/Tp + 1/Te - sqrt(pow(1/Tp + 1/Te,2) - 4 * 1/Te * 1/Tb));
 		REAL Eneg = (Kpos - 1/Tb) / (Kpos - Kneg);
-		for (int n = 1; n < k; n++) {
+		// n <= k to match the model's own loop bound (two-compartment_exchange.cuh)
+		for (int n = 1; n <= (int)k; n++) {
 
 			REAL spacing = timeX[n] - timeX[n - 1];
-			REAL Ct = Cp[n] * (exp(-(timeX[k] - timeX[n]) * Kpos) + Eneg * (exp(-(timeX[k] - timeX[n]) * Kneg) - exp(-Kpos)));
-			REAL Ctprev = Cp[n - 1] * (exp(-(timeX[k] - timeX[n-1]) * Kpos) + Eneg * ( exp(-(timeX[k] - timeX[n-1]) * Kneg) - exp(-Kpos)));
+			// kernel = exp(-lag*Kpos) + Eneg*(exp(-lag*Kneg) - exp(-lag*Kpos)); the
+			// subtracted term needs the same lag-scaled Kpos as the leading term.
+			REAL Ct = Cp[n] * (exp(-(timeX[k] - timeX[n]) * Kpos) + Eneg * (exp(-(timeX[k] - timeX[n]) * Kneg) - exp(-(timeX[k] - timeX[n]) * Kpos)));
+			REAL Ctprev = Cp[n - 1] * (exp(-(timeX[k] - timeX[n-1]) * Kpos) + Eneg * ( exp(-(timeX[k] - timeX[n-1]) * Kneg) - exp(-(timeX[k] - timeX[n-1]) * Kpos)));
 			conv += ((Ct + Ctprev) / 2 * spacing);
 		}
 		REAL y = true_parameters[3] * conv;
@@ -206,6 +211,11 @@ void two_compartment_exchange_four()
 		throw std::runtime_error(gpufit_get_last_error());
 	}
 
+	// parameter[0] is E = Ktrans/Fp; convert back to Ktrans in place
+	for (size_t i = 0; i != n_fits; i++)
+	{
+		output_parameters[i * n_model_parameters + 0] *= output_parameters[i * n_model_parameters + 3];
+	}
 
 	// get fit states
 	std::vector< int > output_states_histogram(5, 0);

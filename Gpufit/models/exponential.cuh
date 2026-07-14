@@ -41,7 +41,7 @@ __device__ void  calculate_exponential(
     /////////////////////////// derivative ///////////////////////////
     REAL * current_derivative = derivative + point_index;
 
-    current_derivative[0 * n_points] = -1 * parameters[0] * parameters[1] * exp(-1 * parameters[0] * x) ;  // formula calculating derivative values with respect to parameters[0]
+    current_derivative[0 * n_points] = -1 * x * parameters[1] * exp(-1 * parameters[0] * x) ;  // formula calculating derivative values with respect to parameters[0]
     current_derivative[1 * n_points] = exp(-1 * parameters[0] * x) ;  // formula calculating derivative values with respect to parameters[1]
 
 }

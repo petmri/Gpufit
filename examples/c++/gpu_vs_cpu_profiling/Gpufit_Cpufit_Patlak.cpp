@@ -251,8 +251,9 @@ int main(int argc, char * argv[])
 		size_t j = i / n_points; // the fit
 		size_t k = i % n_points; // the position within a fit
 		REAL x = 0;
-		for (int n = 1; n < k; n++) {
-		
+		// n <= k to match the model's own loop bound (patlak.cuh)
+		for (int n = 1; n <= (int)k; n++) {
+
 			REAL spacing = timeX[n] - timeX[n - 1];
 			x += (Cp[n - 1] + Cp[n]) / 2 * spacing;
 		}

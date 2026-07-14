@@ -87,7 +87,7 @@ void tofts_two()
 		// random Ktrans
 		initial_parameters[i * n_model_parameters + 0] = true_parameters[0] * (0.1f + 1.8f * uniform_dist(rng));
 		// random Ve
-		initial_parameters[i * n_model_parameters + 1] = true_parameters[0] * (0.1f + 1.8f * uniform_dist(rng));
+		initial_parameters[i * n_model_parameters + 1] = true_parameters[1] * (0.1f + 1.8f * uniform_dist(rng));
 	}
 
 	// parameter_constraints
@@ -115,7 +115,8 @@ void tofts_two()
 		size_t j = i / n_points_per_fit; // the fit
 		size_t k = i % n_points_per_fit; // the position within a fit
 		REAL x = 0;
-		for (int n = 1; n < k; n++) {
+		// n <= k to match the model's own loop bound (tofts.cuh)
+		for (int n = 1; n <= (int)k; n++) {
 		
 			REAL spacing = timeX[n] - timeX[n - 1];
 			REAL Ct = Cp[n] * exp(-true_parameters[0] * (timeX[k]-timeX[n]) / true_parameters[1]);

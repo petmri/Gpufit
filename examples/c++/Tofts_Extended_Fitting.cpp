@@ -122,7 +122,8 @@ void tofts_three()
 		size_t j = i / n_points_per_fit; // the fit
 		size_t k = i % n_points_per_fit; // the position within a fit
 		REAL x = 0;
-		for (int n = 1; n < k; n++) {
+		// n <= k to match the model's own loop bound (tofts_extended.cuh)
+		for (int n = 1; n <= (int)k; n++) {
 		
 			REAL spacing = timeX[n] - timeX[n - 1];
 			REAL Ct = Cp[n] * exp(-true_parameters[0] * (timeX[k]-timeX[n]) / true_parameters[1]);
@@ -164,7 +165,7 @@ void tofts_three()
 	std::vector< REAL > output_chi_square(n_fits);
 	std::vector< int > output_number_iterations(n_fits);
 
-	bool run_constrained = 0;
+	bool run_constrained = 1; // unconstrained ve could wander to ~0 and blow up exp(-Ktrans*t/ve)
 	if(!run_constrained)
 	{
 		// call to gpufit (C interface)

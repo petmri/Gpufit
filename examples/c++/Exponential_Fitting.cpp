@@ -53,6 +53,13 @@ void exponential()
 	// true parameters
 	std::vector< REAL > true_parameters { 20, 175};
 
+	// x positions, spanning ~3 decay time-constants; was left unset (all zero),
+	// which collapsed every fit to a flat curve with no info on the decay rate.
+	for (size_t i = 0; i != n_points_per_fit; i++)
+	{
+		user_info[i] = static_cast<REAL>(i) * (3.0f / (true_parameters[0] * (n_points_per_fit - 1)));
+	}
+
 	//possible place for error
 	float sigma =  (true_parameters[1]) / snr;
 
@@ -71,8 +78,8 @@ void exponential()
 		// random 2nd parameter
 		initial_parameters[i * n_model_parameters + 1] = true_parameters[1] * (0.8f + 0.4f * uniform_dist(rng));
 
-		std::cout << "parameter 0 + noise            " << (REAL) initial_parameters[i * n_model_parameters + 0] << "\n";
-		std::cout << "parameter 1 + noise            " << (REAL) initial_parameters[i * n_model_parameters + 1] << "\n";
+		// std::cout << "parameter 0 + noise            " << (REAL) initial_parameters[i * n_model_parameters + 0] << "\n";
+		// std::cout << "parameter 1 + noise            " << (REAL) initial_parameters[i * n_model_parameters + 1] << "\n";
 	}
 
 	// generate data
@@ -86,9 +93,9 @@ void exponential()
 	    REAL y = true_parameters[1] * pow(exp,(-1 * true_parameters[0] * x));
 		float rician_noise = sqrt(pow(normal_dist(rng),2) + pow(normal_dist(rng),2));
 		data[i] = y + rician_noise;
-		std::cout << "y             " << (REAL) y << "\n";
-		std::cout << "rician noise  " << (REAL) rician_noise << "\n";
-		std::cout << "y with noise  " << (REAL) data[i] << "\n";
+		// std::cout << "y             " << (REAL) y << "\n";
+		// std::cout << "rician noise  " << (REAL) rician_noise << "\n";
+		// std::cout << "y with noise  " << (REAL) data[i] << "\n";
 	}
 
 	// tolerance

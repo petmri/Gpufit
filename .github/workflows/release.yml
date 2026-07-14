@@ -117,14 +117,12 @@ jobs:
             with_cuda: true
             cuda: "12.4.1"
             python: "3.10"
-            visual_studio: "Visual Studio 17 2022"
 
           - os: windows-2025
             asset_id: windows-x64-cuda13.2
             with_cuda: true
             cuda: "13.2.0"
             python: "3.12"
-            visual_studio: "Visual Studio 18 2026"
 
           - os: ubuntu-22.04
             asset_id: linux-x64-cuda11.8
@@ -139,9 +137,9 @@ jobs:
             python: "3.12"
 
           - os: ubuntu-24.04
-            asset_id: linux-x64-cuda13.0
+            asset_id: linux-x64-cuda13.2
             with_cuda: true
-            cuda: "13.0.2"
+            cuda: "13.2.0"
             python: "3.12"
 
           - os: macos-15-intel
@@ -244,7 +242,7 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit-w
         with:
-          sub-packages: '["nvcc", "visual_studio_integration", "cublas", "curand", "nvrtc", "cudart"]'
+          sub-packages: '["nvcc", "cublas", "curand", "nvrtc", "cudart"]'
           cuda: ${{ matrix.cuda }}
           method: network
 
@@ -264,33 +262,16 @@ jobs:
           cuda: ${{ matrix.cuda }}
           method: network
 
-      - name: Enable CUDA BuildCustomizations (Windows)
-        if: runner.os == 'Windows' && matrix.with_cuda
+      - name: Setup MSVC Developer Command Prompt (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Verify Ninja is available (Windows)
+        if: runner.os == 'Windows'
         shell: bash
-        run: |
-          set -euo pipefail
-          VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
-          VS_PATH=$("$VSWHERE" -latest -products '*' -property installationPath | tr -d '\r')
-          echo "Visual Studio path: $VS_PATH"
-          vc_dir="$VS_PATH/MSBuild/Microsoft/VC"
-          echo "Available VC toolset directories:"
-          ls "$vc_dir"
-          # Discover the toolset directory name instead of hardcoding it (e.g. v170
-          # for VS2022): it is not guaranteed to follow the same pattern release to
-          # release, and a wrong guess fails silently (CMake just reports no CUDA
-          # compiler found instead of erroring on the missing customizations).
-          found=0
-          for toolset_dir in "$vc_dir"/v*/; do
-            [[ -d "$toolset_dir" ]] || continue
-            echo "Registering CUDA build customizations into: $toolset_dir"
-            mkdir -p "${toolset_dir}BuildCustomizations"
-            cp -R "$CUDA_PATH/extras/visual_studio_integration/MSBuildExtensions/." "${toolset_dir}BuildCustomizations"
-            found=1
-          done
-          if [[ "$found" -eq 0 ]]; then
-            echo "No VC toolset directory found under $vc_dir; cannot register CUDA build customizations."
-            exit 1
-          fi
+        run: ninja --version
 
       - name: CUDA compiler check
         if: matrix.with_cuda
@@ -304,9 +285,8 @@ jobs:
         run: |
           rm -f "${{ env.build_dir }}/CMakeCache.txt"
           cmake . -B "${{ env.build_dir }}" \
-            -G "${{ matrix.visual_studio }}" \
-            -A x64 \
-            -DCMAKE_GENERATOR_TOOLSET="cuda=$CUDA_PATH" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.config }} \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=${{ env.vcpkg_triplet }} \
             -DBUILD_TESTING=ON \
@@ -342,14 +322,8 @@ jobs:
             -DGPUFIT_ENABLE_CUDA=OFF \
             -DBUILD_TESTING=OFF
 
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        working-directory: ${{ env.build_dir }}
-        shell: bash
-        run: cmake --build . --config ${{ env.config }} --target ALL_BUILD --verbose
 
-      - name: Build (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Build
         working-directory: ${{ env.build_dir }}
         shell: bash
         run: cmake --build . --verbose
@@ -367,13 +341,9 @@ jobs:
           export PYTHONPATH="${cpufit_pkg_root}${PYTHONPATH:+:${PYTHONPATH}}"
           python "${GITHUB_WORKSPACE}/.github/scripts/smoke_test_pycpufit.py"
 
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows' && matrix.with_cuda
-        shell: bash
-        run: ctest --test-dir "${{ env.build_dir }}" -C "${{ env.config }}" --output-on-failure
 
-      - name: Run tests (Linux)
-        if: runner.os == 'Linux' && matrix.with_cuda
+      - name: Run tests
+        if: matrix.with_cuda
         shell: bash
         run: ctest --test-dir "${{ env.build_dir }}" --output-on-failure
 

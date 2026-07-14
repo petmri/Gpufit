@@ -25,7 +25,6 @@ jobs:
             with_cuda: true
             cuda: "12.4.1"
             visual_studio: "Visual Studio 17 2022"
-            vc_toolset: "v170"
             python: "3.10"
 
           - os: windows-2025
@@ -33,7 +32,6 @@ jobs:
             with_cuda: true
             cuda: "13.2.0"
             visual_studio: "Visual Studio 18 2026"
-            vc_toolset: "v180"
             python: "3.12"
 
           # Linux: old/new supported runner + old/new CUDA
@@ -155,10 +153,29 @@ jobs:
         if: runner.os == 'Windows' && matrix.with_cuda
         shell: bash
         run: |
+          set -euo pipefail
           VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
           VS_PATH=$("$VSWHERE" -latest -products '*' -property installationPath | tr -d '\r')
           echo "Visual Studio path: $VS_PATH"
-          cp -R "$CUDA_PATH/extras/visual_studio_integration/MSBuildExtensions/." "$VS_PATH/MSBuild/Microsoft/VC/${{ matrix.vc_toolset }}/BuildCustomizations"
+          vc_dir="$VS_PATH/MSBuild/Microsoft/VC"
+          echo "Available VC toolset directories:"
+          ls "$vc_dir"
+          # Discover the toolset directory name instead of hardcoding it (e.g. v170
+          # for VS2022): it is not guaranteed to follow the same pattern release to
+          # release, and a wrong guess fails silently (CMake just reports no CUDA
+          # compiler found instead of erroring on the missing customizations).
+          found=0
+          for toolset_dir in "$vc_dir"/v*/; do
+            [[ -d "$toolset_dir" ]] || continue
+            echo "Registering CUDA build customizations into: $toolset_dir"
+            mkdir -p "${toolset_dir}BuildCustomizations"
+            cp -R "$CUDA_PATH/extras/visual_studio_integration/MSBuildExtensions/." "${toolset_dir}BuildCustomizations"
+            found=1
+          done
+          if [[ "$found" -eq 0 ]]; then
+            echo "No VC toolset directory found under $vc_dir; cannot register CUDA build customizations."
+            exit 1
+          fi
 
       - name: nvcc check
         if: matrix.with_cuda

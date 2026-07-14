@@ -86,6 +86,9 @@ private:
     void update_states();
     void update_parameters();
     void project_parameters_to_box();
+    void update_parameters_trial(REAL const step_scale);
+    void mark_backtrack_accepted();
+    void constrained_backtracking_step();
 
 public:
 

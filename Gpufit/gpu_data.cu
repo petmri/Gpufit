@@ -58,6 +58,7 @@ GPUData::GPUData(Info const & info) :
     
     finished_( info_.max_chunk_size_ ),
     iteration_failed_(info_.max_chunk_size_),
+    backtrack_accepted_(info_.max_chunk_size_),
     all_finished_( 1 ),
 
     n_iterations_(
@@ -147,6 +148,7 @@ void GPUData::init
 
     set(prev_chi_squares_, 0., chunk_size_);
     set(finished_, 0, chunk_size_);
+    set(backtrack_accepted_, 0, chunk_size_);
     set(scaling_vectors_, 0., chunk_size_ * info_.n_parameters_to_fit_);
     set(states_, 0, chunk_size_);
     set(lambdas_, 0.001f, chunk_size_);

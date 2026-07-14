@@ -121,6 +121,24 @@ extern __global__ void cuda_update_parameters(
     int const * finished,
     int const n_fits_per_block);
 
+extern __global__ void cuda_update_parameters_trial(
+    REAL * parameters,
+    REAL const * prev_parameters,
+    REAL const * deltas,
+    REAL const step_scale,
+    int const n_parameters_to_fit,
+    int const * parameters_to_fit_indices,
+    int const * finished,
+    int const * backtrack_accepted,
+    int const n_fits_per_block);
+
+extern __global__ void cuda_mark_backtrack_accepted(
+    int * backtrack_accepted,
+    REAL const * chi_squares,
+    REAL const * prev_chi_squares,
+    int const * finished,
+    int const n_fits);
+
 extern __global__ void cuda_check_for_convergence(
     int * finished,
     REAL const tolerance,
@@ -133,6 +151,7 @@ extern __global__ void cuda_check_for_convergence(
     int const n_parameters,
     int const n_parameters_to_fit,
     int const * parameters_to_fit_indices,
+    int const * iteration_failed,
     int const iteration,
     int const max_n_iterations,
     int const n_fits);

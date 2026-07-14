@@ -1,5 +1,6 @@
 #include "lm_fit.h"
 #include <algorithm>
+#include <cmath>
 #include "cuda_kernels.cuh"
 
 #ifdef USE_CUBLAS
@@ -159,6 +160,78 @@ void LMFitCUDA::update_parameters()
         gpu_data_.finished_,
         info_.n_fits_per_block_);
     CUDA_CHECK_STATUS(cudaGetLastError());
+}
+
+void LMFitCUDA::update_parameters_trial(REAL const step_scale)
+{
+    dim3  threads(1, 1, 1);
+    dim3  blocks(1, 1, 1);
+
+    threads.x = info_.n_parameters_*info_.n_fits_per_block_;
+    blocks.x = n_fits_ / info_.n_fits_per_block_;
+
+    cuda_update_parameters_trial <<< blocks, threads >>>(
+        gpu_data_.parameters_,
+        gpu_data_.prev_parameters_,
+        gpu_data_.deltas_,
+        step_scale,
+        info_.n_parameters_to_fit_,
+        gpu_data_.parameters_to_fit_indices_,
+        gpu_data_.finished_,
+        gpu_data_.backtrack_accepted_,
+        info_.n_fits_per_block_);
+    CUDA_CHECK_STATUS(cudaGetLastError());
+}
+
+void LMFitCUDA::mark_backtrack_accepted()
+{
+    dim3  threads(1, 1, 1);
+    dim3  blocks(1, 1, 1);
+
+    threads.x = std::min(n_fits_, 256);
+    blocks.x = int(std::ceil(REAL(n_fits_) / REAL(threads.x)));
+
+    cuda_mark_backtrack_accepted <<< blocks, threads >>>(
+        gpu_data_.backtrack_accepted_,
+        gpu_data_.chi_squares_,
+        gpu_data_.prev_chi_squares_,
+        gpu_data_.finished_,
+        n_fits_);
+    CUDA_CHECK_STATUS(cudaGetLastError());
+}
+
+void LMFitCUDA::constrained_backtracking_step()
+{
+    // Freeze the base point for this outer iteration's line search: prev_parameters_
+    // holds the last accepted parameters for the duration of the backtracking loop
+    // below (mirrors "base_parameters" in Cpufit/lm_fit_cpp.cpp). This must happen
+    // before any trial step is taken, since update_parameters_trial reads it as a
+    // fixed reference point at every step_scale.
+    gpu_data_.copy(
+        gpu_data_.prev_parameters_,
+        gpu_data_.parameters_,
+        n_fits_ * info_.n_parameters_);
+    gpu_data_.set(gpu_data_.backtrack_accepted_, 0, n_fits_);
+
+    // Try the full step, then halved steps, same schedule as the CPU backtracking
+    // loop (up to 8 halvings -> smallest scale 1/256). The first step_scale that
+    // improves chi-square for a given fit is kept (see cuda_mark_backtrack_accepted);
+    // fits that never improve are left at the smallest trial and get reverted by
+    // cuda_prepare_next_iteration further down the caller's loop, same as before.
+    int const max_backtracking_steps = 8;
+    for (int backtracking_index = 0; backtracking_index <= max_backtracking_steps; backtracking_index++)
+    {
+        REAL const step_scale = std::pow(static_cast<REAL>(0.5f), static_cast<REAL>(backtracking_index));
+
+        update_parameters_trial(step_scale);
+        project_parameters_to_box();
+        calc_curve_values();
+        calc_chi_squares();
+        mark_backtrack_accepted();
+    }
+
+    calc_gradients();
+    calc_hessians();
 }
 
 void LMFitCUDA::calc_curve_values()
@@ -360,6 +433,7 @@ void LMFitCUDA::evaluate_iteration(int const iteration)
         info_.n_parameters_,
         info_.n_parameters_to_fit_,
         gpu_data_.parameters_to_fit_indices_,
+        gpu_data_.iteration_failed_,
         iteration,
         info_.max_n_iterations_,
         n_fits_);

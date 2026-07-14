@@ -1028,6 +1028,178 @@ __global__ void cuda_update_parameters(
     current_parameters[parameters_to_fit_indices[parameter_index]] += current_deltas[parameter_index];
 }
 
+/* Description of the cuda_update_parameters_trial function
+* =========================================================
+*
+* Constrained backtracking line search (mirrors the CPU LM solver's inner
+* backtracking loop in Cpufit/lm_fit_cpp.cpp): computes a trial step at a given
+* step_scale relative to the fixed base point prev_parameters (the last accepted
+* parameters for this outer LM iteration), instead of accumulating onto the
+* previous trial. Fits that are finished, or that already found an improving
+* step earlier in this outer iteration's backtracking search
+* (backtrack_accepted), are left untouched so a smaller-scale trial does not
+* clobber an already-accepted step.
+*
+* Parameters:
+*
+* parameters: An output vector of concatenated sets of model parameters.
+*
+* prev_parameters: An input vector of concatenated sets of model parameters,
+*                   fixed for the duration of this outer iteration's
+*                   backtracking search.
+*
+* deltas: An input vector of concatenated delta values computed by solving the
+*         LM equation system once per outer iteration.
+*
+* step_scale: The backtracking step scale applied to deltas (1, 1/2, 1/4, ...).
+*
+* n_parameters_to_fit: The number of fitted curve parameters.
+*
+* parameters_to_fit_indices: The indices of fitted curve parameters.
+*
+* finished: An input vector which allows the parameter update to be skipped for
+*           single fits.
+*
+* backtrack_accepted: An input vector which allows the parameter update to be
+*                      skipped for fits that already accepted a step earlier in
+*                      this outer iteration's backtracking search.
+*
+* n_fits_per_block: The number of fits calculated by each threadblock.
+*
+* Calling the cuda_update_parameters_trial function
+* ==================================================
+*
+* When calling the function, the blocks and threads must be set up correctly,
+* as shown in the following example code.
+*
+*   dim3  threads(1, 1, 1);
+*   dim3  blocks(1, 1, 1);
+*
+*   threads.x = n_parameters * n_fits_per_block;
+*   blocks.x = n_fits / n_fits_per_block;
+*
+*   cuda_update_parameters_trial<<< blocks, threads >>>(
+*       parameters,
+*       prev_parameters,
+*       deltas,
+*       step_scale,
+*       n_parameters_to_fit,
+*       parameters_to_fit_indices,
+*       finished,
+*       backtrack_accepted,
+*       n_fits_per_block);
+*
+*/
+
+__global__ void cuda_update_parameters_trial(
+    REAL * parameters,
+    REAL const * prev_parameters,
+    REAL const * deltas,
+    REAL const step_scale,
+    int const n_parameters_to_fit,
+    int const * parameters_to_fit_indices,
+    int const * finished,
+    int const * backtrack_accepted,
+    int const n_fits_per_block)
+{
+    int const n_parameters = blockDim.x / n_fits_per_block;
+    int const fit_in_block = threadIdx.x / n_parameters;
+    int const parameter_index = threadIdx.x - fit_in_block * n_parameters;
+    int const fit_index = blockIdx.x * n_fits_per_block + fit_in_block;
+
+    if (finished[fit_index] || backtrack_accepted[fit_index])
+    {
+        return;
+    }
+
+    REAL * current_parameters = &parameters[fit_index * n_parameters];
+    REAL const * current_prev_parameters = &prev_parameters[fit_index * n_parameters];
+
+    current_parameters[parameter_index] = current_prev_parameters[parameter_index];
+
+    if (parameter_index >= n_parameters_to_fit)
+    {
+        return;
+    }
+
+    REAL const * current_deltas = &deltas[fit_index * n_parameters_to_fit];
+
+    current_parameters[parameters_to_fit_indices[parameter_index]]
+        = current_prev_parameters[parameters_to_fit_indices[parameter_index]]
+        + step_scale * current_deltas[parameter_index];
+}
+
+/* Description of the cuda_mark_backtrack_accepted function
+* =========================================================
+*
+* Marks, per fit, whether the current backtracking trial (computed by
+* cuda_update_parameters_trial + a curve/chi-square recomputation) improves on
+* the last accepted chi-square. Once set for a fit, it stays set for the rest
+* of that outer iteration's backtracking search, freezing the accepted trial
+* parameters (see cuda_update_parameters_trial) — this is the CUDA analogue of
+* the CPU backtracking loop's "break on first accepted trial".
+*
+* Parameters:
+*
+* backtrack_accepted: An input and output vector of flags, set to 1 the first
+*                      time a fit's trial chi-square improves on prev_chi_squares
+*                      during the current outer iteration's backtracking search.
+*
+* chi_squares: An input vector of chi-square values for the current trial.
+*
+* prev_chi_squares: An input vector of chi-square values at the last accepted
+*                    point (fixed for the duration of the backtracking search).
+*
+* finished: An input vector which allows fits to be skipped once the whole LM
+*           fit has finished.
+*
+* n_fits: The number of fits.
+*
+* Calling the cuda_mark_backtrack_accepted function
+* ==================================================
+*
+* When calling the function, the blocks and threads must be set up correctly,
+* as shown in the following example code.
+*
+*   dim3  threads(1, 1, 1);
+*   dim3  blocks(1, 1, 1);
+*
+*   int const example_value = 256;
+*
+*   threads.x = min(n_fits, example_value);
+*   blocks.x = int(ceil(REAL(n_fits) / REAL(threads.x)));
+*
+*   cuda_mark_backtrack_accepted<<< blocks, threads >>>(
+*       backtrack_accepted,
+*       chi_squares,
+*       prev_chi_squares,
+*       finished,
+*       n_fits);
+*
+*/
+
+__global__ void cuda_mark_backtrack_accepted(
+    int * backtrack_accepted,
+    REAL const * chi_squares,
+    REAL const * prev_chi_squares,
+    int const * finished,
+    int const n_fits)
+{
+    int const fit_index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (fit_index >= n_fits || finished[fit_index] || backtrack_accepted[fit_index])
+    {
+        return;
+    }
+
+    // chi_squares[fit_index] can be NaN, which compares false against anything,
+    // so a non-finite trial is correctly never marked accepted.
+    if (chi_squares[fit_index] < prev_chi_squares[fit_index])
+    {
+        backtrack_accepted[fit_index] = 1;
+    }
+}
+
 /* Description of the cuda_update_state_after_solving function
  * ===========================================================
  *
@@ -1156,6 +1328,7 @@ __global__ void cuda_check_for_convergence(
     int const n_parameters,
     int const n_parameters_to_fit,
     int const * parameters_to_fit_indices,
+    int const * iteration_failed,
     int const iteration,
     int const max_n_iterations,
     int const n_fits)
@@ -1175,8 +1348,15 @@ __global__ void cuda_check_for_convergence(
     REAL const chi_square = chi_squares[fit_index];
     REAL const prev_chi_square = prev_chi_squares[fit_index];
 
+    // A rejected step (no backtracking trial improved chi-square this outer
+    // iteration) leaves chi_square == prev_chi_square, which must not be
+    // mistaken for convergence -- see Cpufit/lm_fit_cpp.cpp's step_accepted
+    // gate on the identical chi-square-difference test. A genuine constrained
+    // stationary point is still caught by the projected-step / non-increase
+    // test below, which does not require this iteration's step to be accepted.
     int fit_found
-        = fabs(chi_square - prev_chi_square)
+        = (!use_constraints || !iteration_failed[fit_index])
+        && fabs(chi_square - prev_chi_square)
         < tolerance * max(static_cast<REAL>(1.f), fabs(chi_square));
 
     if (!fit_found && use_constraints)

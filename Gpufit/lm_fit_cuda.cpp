@@ -47,17 +47,26 @@ void LMFitCUDA::run()
         scale_hessians();
         SOLVE_EQUATION_SYSTEMS();
         update_states();
-        update_parameters();
 
         if (info_.use_constraints_)
-            project_parameters_to_box();
+        {
+            // Backtracking line search (mirrors the inner backtracking loop in
+            // Cpufit/lm_fit_cpp.cpp): try the full step, then halved steps,
+            // keeping the first that improves chi-square; recomputes
+            // gradients/hessians once at the resulting point.
+            constrained_backtracking_step();
+        }
+        else
+        {
+            update_parameters();
 
-        // calculate fitting curve values and its derivatives
-        // calculate chi-squares, gradients and hessians
-		calc_curve_values();
-        calc_chi_squares();
-        calc_gradients();
-        calc_hessians();
+            // calculate fitting curve values and its derivatives
+            // calculate chi-squares, gradients and hessians
+            calc_curve_values();
+            calc_chi_squares();
+            calc_gradients();
+            calc_hessians();
+        }
 
         // check which fits have converged
         // flag finished fits

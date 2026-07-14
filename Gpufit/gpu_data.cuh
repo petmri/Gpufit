@@ -97,12 +97,12 @@ public:
 
     void read(bool * dst, int const * src);
     void set(int* arr, int const value);
+    void set(int* arr, int const value, int const count);
     void set(REAL* arr, REAL const value, int const count);
     void copy(REAL * dst, REAL const * src, std::size_t const count);
 
 private:
 
-    void set(int* arr, int const value, int const count);
     void write(REAL* dst, REAL const * src, int const count);
     void write(int * dst, int const * src, int const count);
     void write(int* dst, std::vector<int> const & src);
@@ -142,6 +142,7 @@ public:
     Device_Array< int > states_;
     Device_Array< int > finished_;
     Device_Array< int > iteration_failed_;
+    Device_Array< int > backtrack_accepted_;
     Device_Array< int > all_finished_;
     Device_Array< int > n_iterations_;
     Device_Array< int > solution_info_;

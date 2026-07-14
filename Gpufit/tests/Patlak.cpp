@@ -7,16 +7,24 @@
 #include <array>
 #include <cmath>
 #include <random>
+#include <string>
+#include <vector>
 
 BOOST_AUTO_TEST_CASE( Patlak )
 {
 	/*
 		Performs a single fit using the Patlak (PATLAK) model.
-		- Uses user info 
+		- Uses user info
 		- Uses trivial weights.
 		- No noise is added.
 		- Checks fitted parameters equalling the true parameters.
 	*/
+
+    if (!gpufit_cuda_available())
+    {
+        BOOST_TEST_MESSAGE(std::string("Skipping Patlak GPU fit because CUDA is unavailable: ") + gpufit_get_last_error());
+        return;
+    }
 
     std::size_t const n_fits{ 10000 } ;
     std::size_t const n_points{ 60 } ;
@@ -40,7 +48,9 @@ BOOST_AUTO_TEST_CASE( Patlak )
 					0.000916221960431984f, 0.000788599549519612f, 0.000678753922476738f };
 
     // std::array< REAL, n_points > data{ { 1, 2 } } ;
-	std::array< REAL, n_points*n_fits > data;
+	// Heap-allocated: n_points*n_fits REAL values would overflow the default
+	// thread stack on Windows (~1MB) if declared as a std::array.
+	std::vector< REAL > data(n_points*n_fits);
 	std::mt19937 rng;
 	rng.seed(time(NULL));
 	for (size_t i = 0; i != data.size(); i++)
@@ -91,7 +101,7 @@ BOOST_AUTO_TEST_CASE( Patlak )
 					0.00225354238438883f, 0.00193964190545541f, 0.00166946525943377f, 0.00143692206515917f, 0.00123677028298367f, 0.00106449804756952f,
 					0.000916221960431984f, 0.000788599549519612f, 0.000678753922476738f} } ;
     
-	std::array< REAL, n_fits * 2 > output_parameters ;
+	std::vector< REAL > output_parameters(n_fits * 2);
 	std::vector< int > output_states(n_fits);
 	std::vector< REAL > output_chi_squares(n_fits);
 	std::vector< int > output_n_iterations(n_fits);

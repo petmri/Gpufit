@@ -128,7 +128,7 @@ jobs:
 
       - name: Install CUDA (Windows)
         if: runner.os == 'Windows' && matrix.with_cuda
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit-w
         with:
           sub-packages: '["nvcc", "visual_studio_integration", "cublas", "curand", "nvrtc", "cudart"]'
@@ -144,7 +144,7 @@ jobs:
 
       - name: Install CUDA (Linux)
         if: runner.os == 'Linux' && matrix.with_cuda
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit-l
         with:
           sub-packages: '["nvcc", "nvrtc", "cudart"]'

@@ -62,11 +62,7 @@ jobs:
             cuda: "cpu"
             python: "3.10"
             # release: latest resolves to R2026a, and MathWorks confirms R2025b was the last
-            # MATLAB release to support Intel Macs (R2026a+ is Apple Silicon only) -- see
-            # https://www.mathworks.com/support/requirements/platform-road-map.html. Pin this
-            # leg to the last Intel-supported release instead of "latest". matlab_optional
-            # still guards the step (continue-on-error) as a safety net in case a future
-            # release bump on the other legs' "latest" silently regresses this pin too.
+            # MATLAB release to support Intel Macs (R2026a+ is Apple Silicon only)
             matlab_release: "R2025b"
             matlab_optional: true
 

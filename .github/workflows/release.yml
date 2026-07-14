@@ -125,8 +125,8 @@ jobs:
             with_cuda: true
             cuda: "12.8.1"
             python: "3.12"
-            visual_studio: "Visual Studio 17 2022"
-            vc_toolset: "v170"
+            visual_studio: "Visual Studio 18 2026"
+            vc_toolset: "v180"
 
           - os: ubuntu-22.04
             asset_id: linux-x64-cuda11.8
@@ -149,6 +149,9 @@ jobs:
           - os: macos-15-intel
             asset_id: macos-x64-cpu
             with_cuda: false
+            # release: latest resolves to R2026a, and MathWorks confirms R2025b was the last
+            # MATLAB release to support Intel Macs (R2026a+ is Apple Silicon only)
+            matlab_release: "R2025b"
             python: "3.10"
 
           - os: macos-14

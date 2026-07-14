@@ -2010,10 +2010,17 @@ void LMFitCPP::calculate_hessian(
                         }
                         else if (info_.estimator_id_ == MLE)
                         {
-                            sum
-                                += data_[pixel_index] / (curve[pixel_index] * curve[pixel_index])
-                                * derivatives[derivatives_index_i + pixel_index]
-                                * derivatives[derivatives_index_j + pixel_index];
+                            // Matches calc_chi_square's data==0 branch (and Gpufit's
+                            // calculate_hessian_mle): the Poisson deviance's log term
+                            // vanishes when the observed count is zero, which would
+                            // divide 0/0 and corrupt every fit's Hessian.
+                            if (data_[pixel_index] != 0.f)
+                            {
+                                sum
+                                    += data_[pixel_index] / (curve[pixel_index] * curve[pixel_index])
+                                    * derivatives[derivatives_index_i + pixel_index]
+                                    * derivatives[derivatives_index_j + pixel_index];
+                            }
                         }
                     }
                     hessian_[ijhessian] = REAL(sum);
@@ -2062,8 +2069,17 @@ void LMFitCPP::calc_gradient(
                 }
                 else if (info_.estimator_id_ == MLE)
                 {
-                    sum
-                        += -derivatives[derivatives_index + pixel_index] * (1 - data_[pixel_index] / curve[pixel_index]);
+                    // See calc_hessian: avoid 0/0 = NaN
+                    if (data_[pixel_index] != 0.f)
+                    {
+                        sum
+                            += -derivatives[derivatives_index + pixel_index] * (1 - data_[pixel_index] / curve[pixel_index]);
+                    }
+                    else
+                    {
+                        sum
+                            += -derivatives[derivatives_index + pixel_index];
+                    }
                 }
             }
             gradient_[gradient_index] = REAL(sum);
@@ -2093,7 +2109,8 @@ void LMFitCPP::calc_chi_square(
         }
         else if (info_.estimator_id_ == MLE)
         {
-            if (values[pixel_index] <= 0.f)
+            // Only a strictly negative model value is invalid. value == 0 when data == 0 
+            if (values[pixel_index] < 0.f)
             {
                 *state_ = FitState::NEG_CURVATURE_MLE;
                 return;

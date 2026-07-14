@@ -18,9 +18,6 @@ endif()
 
 if (GPUFIT_USE_PATLAK)
 	add_boost_test( Gpufit Patlak )
-	# MLE sub-test has a known false-convergence bug (see TODO in Patlak.cpp);
-	# WILL_FAIL keeps CI green until that's fixed separately.
-	set_tests_properties( Gpufit_Test_Patlak PROPERTIES WILL_FAIL TRUE )
 endif()
 
 if( UNIX )

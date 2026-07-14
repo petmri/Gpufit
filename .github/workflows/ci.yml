@@ -31,7 +31,7 @@ jobs:
           - os: windows-2025
             arch: x64
             with_cuda: true
-            cuda: "12.8.1"
+            cuda: "13.2.0"
             visual_studio: "Visual Studio 18 2026"
             vc_toolset: "v180"
             python: "3.12"

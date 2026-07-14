@@ -23,7 +23,7 @@ get_filename_component(JAVA_HOME ${JAVA_BIN_DIR} PATH)
 set( ENV{JAVA_HOME} ${JAVA_HOME} )
 
 # Try running Java
-exec_program( java ARGS -version RETURN_VALUE java_return_value )
+execute_process( COMMAND java -version RESULT_VARIABLE java_return_value )
 
 if( java_return_value EQUAL -1 )
     message( "Java NOT found by environment - skipping Gpufit Java binding!" )

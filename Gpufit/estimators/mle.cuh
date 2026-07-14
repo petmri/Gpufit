@@ -117,6 +117,15 @@ __device__ void calculate_hessian_mle(
     char * user_info,
     std::size_t const user_info_size)
 {
+    // Matches calc_chi_square's data==0 branch (and Gpufit's
+    // calculate_hessian_mle): the Poisson deviance's log term
+    // vanishes when the observed count is zero, which would
+    // divide 0/0 and corrupt every fit's Hessian.
+    if (data[point_index] == 0)
+    {
+        return;
+    }
+
     *hessian
         += data[point_index]
         / (value[point_index] * value[point_index])
@@ -171,9 +180,17 @@ __device__ void calculate_gradient_mle(
     char * user_info,
     std::size_t const user_info_size)
 {
-    gradient[point_index]
-        = -derivative[parameter_index]
-        * (1 - data[point_index] / value[point_index]);
+    // See calculate_hessian_mle: avoid 0/0 = NaN.
+    if (data[point_index] == 0)
+    {
+        gradient[point_index] = -derivative[parameter_index];
+    }
+    else
+    {
+        gradient[point_index]
+            = -derivative[parameter_index]
+            * (1 - data[point_index] / value[point_index]);
+    }
 }
 
 #endif

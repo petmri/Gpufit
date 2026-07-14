@@ -128,11 +128,6 @@ BOOST_AUTO_TEST_CASE( Patlak )
 	BOOST_CHECK(std::abs(output_parameters[1] - true_parameters[1]) < 1e-6);
 
 	// test with MLE
-	// TODO: this sub-test still fails -- fit 0 reports CONVERGED after a single
-	// iteration, landing ~30% off true_parameters[0]. Looks like a false-convergence
-	// in the unconstrained solver path (separate from the constrained-path fix
-	// elsewhere in this repo), possibly related to the AIF's leading zero values
-	// under MLE's Poisson likelihood. Needs its own investigation.
 	status = gpufit
 		(
 			n_fits,

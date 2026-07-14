@@ -6,10 +6,16 @@
 
 cmake_minimum_required( VERSION 3.18 )
 set_property( GLOBAL PROPERTY USE_FOLDERS ON )
-cmake_policy(SET CMP0091 NEW)
+# cmake_policy(SET CMP0091 NEW)
+cmake_policy(SET CMP0167 OLD)
+
+# Pin explicitly so release binaries; must be set before project().
+if( APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET )
+  set( CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment target" FORCE )
+endif()
 
 if( NOT PROJECT_NAME )
-  project( Gpufit VERSION 1.4.1 LANGUAGES CXX )
+  project( Gpufit VERSION 1.5.0 LANGUAGES CXX )
   include( CTest )
 endif()
 

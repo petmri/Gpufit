@@ -121,9 +121,9 @@ jobs:
             vc_toolset: "v170"
 
           - os: windows-2025
-            asset_id: windows-x64-cuda12.8
+            asset_id: windows-x64-cuda13.2
             with_cuda: true
-            cuda: "12.8.1"
+            cuda: "13.2.0"
             python: "3.12"
             visual_studio: "Visual Studio 18 2026"
             vc_toolset: "v180"
@@ -337,7 +337,7 @@ jobs:
         shell: bash
         run: cmake --build . --verbose
 
-      - name: Verify pyCpufit import
+      - name: Smoke test pyCpufit (build tree)
         shell: bash
         run: |
           set -euo pipefail
@@ -348,11 +348,7 @@ jobs:
             exit 1
           fi
           export PYTHONPATH="${cpufit_pkg_root}${PYTHONPATH:+:${PYTHONPATH}}"
-          python - <<'PY'
-          import pycpufit.cpufit as cf
-          print("pycpufit:", cf.__file__)
-          print("fit_constrained:", hasattr(cf, "fit_constrained"))
-          PY
+          python "${GITHUB_WORKSPACE}/.github/scripts/smoke_test_pycpufit.py"
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows' && matrix.with_cuda
@@ -532,6 +528,19 @@ jobs:
           EOF
 
           tar -C "${package_root}" -czf "${archive_path}" "$(basename "${release_root}")"
+
+      - name: Smoke test packaged pyCpufit
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_root="package/gpufit-${{ needs.prepare.outputs.release_tag }}-${{ matrix.asset_id }}"
+          pkg_dir="${release_root}/python/src/Cpufit"
+          if [[ ! -d "${pkg_dir}/pycpufit" ]]; then
+            echo "Packaged pyCpufit not found at ${pkg_dir}."
+            exit 1
+          fi
+          export PYTHONPATH="${pkg_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+          python "${GITHUB_WORKSPACE}/.github/scripts/smoke_test_pycpufit.py"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v6

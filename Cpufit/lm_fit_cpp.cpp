@@ -17,193 +17,125 @@ namespace
 {
 constexpr REAL PI = static_cast<REAL>(3.14159265359);
 
-REAL positive_centered_difference_step(REAL const parameter)
+// ---------------------------------------------------------------------------
+// O(N) exponential-recurrence convolution primitives (shared by the DCE models).
+//
+// For a single-pole kernel with rate kappa, the discrete trapezoidal convolution
+//     G[k] = integral_0^{t_k} Cp(tau) * exp(-kappa * (t_k - tau)) dtau
+// satisfies the exact recurrence (decay = exp(-kappa * dt_k)):
+//     G[k]  = decay * G[k-1] + 0.5 * dt * (Cp[k-1] * decay + Cp[k])
+// and its derivative wrt the rate, Gp[k] = dG[k]/dkappa, satisfies
+//     Gp[k] = decay * (Gp[k-1] - dt * G[k-1] - 0.5 * dt^2 * Cp[k-1]).
+// This replaces the previous O(N^2) per-point convolution and gives exact analytic
+// Jacobians for the multi-compartment models (parameter[0] = E = Ktrans/Fp). See
+// docs/project-management/projects/osipi-verification/STATUS.md.
+// ---------------------------------------------------------------------------
+void exp_conv_recurrence(
+    REAL const kappa,
+    REAL const * const time,
+    REAL const * const cp,
+    std::size_t const n,
+    REAL * const g_out,
+    REAL * const gp_out)          // nullptr when only the value (not d/dkappa) is needed
 {
-    REAL h = std::max(static_cast<REAL>(1e-6f), static_cast<REAL>(1e-3f) * std::abs(parameter));
-    if (parameter > 0.f)
+    if (n == 0)
     {
-        h = std::min(h, parameter * static_cast<REAL>(0.25f));
+        return;
     }
-    return std::max(h, static_cast<REAL>(1e-8f));
+    REAL g = 0.f;
+    REAL gp = 0.f;
+    g_out[0] = 0.f;
+    if (gp_out)
+    {
+        gp_out[0] = 0.f;
+    }
+    for (std::size_t k = 1; k < n; k++)
+    {
+        REAL const dt = time[k] - time[k - 1];
+        REAL const decay = std::exp(-kappa * dt);
+        if (gp_out)
+        {
+            // Uses G[k-1] (the pre-update g) and Cp[k-1].
+            gp = decay * (gp - dt * g - 0.5f * dt * dt * cp[k - 1]);
+            gp_out[k] = gp;
+        }
+        g = decay * g + 0.5f * dt * (cp[k - 1] * decay + cp[k]);
+        g_out[k] = g;
+    }
 }
 
-REAL tofts_get_value(
-    REAL const ktrans,
-    REAL const ve,
-    std::size_t const point_index,
+// Running cumulative trapezoidal integral U[k] = integral_0^{t_k} Cp(tau) dtau.
+void cumulative_trapz(
     REAL const * const time,
-    REAL const * const cp)
+    REAL const * const cp,
+    std::size_t const n,
+    REAL * const u_out)
 {
-    REAL convolution = 0.f;
-    for (std::size_t i = 1; i <= point_index; i++)
+    if (n == 0)
     {
-        REAL const spacing = time[i] - time[i - 1];
-        REAL const ct = cp[i] * std::exp(-ktrans * (time[point_index] - time[i]) / ve);
-        REAL const ct_prev = cp[i - 1] * std::exp(-ktrans * (time[point_index] - time[i - 1]) / ve);
-        convolution += (ct + ct_prev) * spacing / 2.f;
+        return;
     }
-    return ktrans * convolution;
+    REAL u = 0.f;
+    u_out[0] = 0.f;
+    for (std::size_t k = 1; k < n; k++)
+    {
+        REAL const dt = time[k] - time[k - 1];
+        u += 0.5f * dt * (cp[k - 1] + cp[k]);
+        u_out[k] = u;
+    }
 }
 
-REAL tofts_extended_get_value(
-    REAL const ktrans,
-    REAL const ve,
-    REAL const vp,
-    std::size_t const point_index,
-    REAL const * const time,
-    REAL const * const cp)
+// Internal scalars for the reparameterized 2CXM model (parameter[0] = E = Ktrans/Fp,
+// so PS = Fp * E / (1 - E); the Ktrans = Fp pole becomes the bound E -> 1).
+struct TwoCxmInternals
 {
-    REAL convolution = 0.f;
-    for (std::size_t i = 1; i <= point_index; i++)
-    {
-        REAL const spacing = time[i] - time[i - 1];
-        REAL const ct = cp[i] * std::exp(-ktrans * (time[point_index] - time[i]) / ve);
-        REAL const ct_prev = cp[i - 1] * std::exp(-ktrans * (time[point_index] - time[i - 1]) / ve);
-        convolution += (ct + ct_prev) * spacing / 2.f;
-    }
-    return ktrans * convolution + vp * cp[point_index];
-}
+    REAL ps;
+    REAL rp;         // (PS + Fp) / vp = 1 / Tp
+    REAL re;         // PS / ve       = 1 / Te
+    REAL rb;         // Fp / vp       = 1 / Tb
+    REAL dr;         // sqrt(discriminant) = Kpos - Kneg
+    REAL kpos;
+    REAL kneg;
+    REAL eneg;
+    bool ok;
+};
 
-REAL tissue_uptake_get_value(
-    REAL const ktrans,
-    REAL const vp,
-    REAL const fp,
-    std::size_t const point_index,
-    REAL const * const time,
-    REAL const * const cp)
+TwoCxmInternals two_cxm_internals(REAL const e, REAL const ve, REAL const vp, REAL const fp)
 {
     REAL const eps = static_cast<REAL>(1e-12f);
-    if (!std::isfinite(ktrans) || !std::isfinite(vp) || !std::isfinite(fp))
+    TwoCxmInternals s{};
+    s.ok = false;
+    if (!std::isfinite(e) || !std::isfinite(ve) || !std::isfinite(vp) || !std::isfinite(fp))
     {
-        return 0.f;
+        return s;
     }
-    if (ktrans <= eps || fp <= eps || vp < 0.f)
+    if (!(e > eps) || !(e < 1.f - eps) || !(ve > eps) || !(vp > eps) || !(fp > eps))
     {
-        return 0.f;
+        return s;
     }
-
-    REAL convolution = 0.f;
-    REAL ps = 0.f;
-    if (ktrans >= fp - eps)
+    REAL const one_minus_e = 1.f - e;
+    s.ps = fp * e / one_minus_e;
+    s.rp = (s.ps + fp) / vp;
+    s.re = s.ps / ve;
+    s.rb = fp / vp;
+    REAL const a = s.rp + s.re;
+    REAL const c = s.re * s.rb;
+    REAL disc = a * a - 4.f * c;
+    if (!(disc > 0.f))
     {
-        ps = static_cast<REAL>(1e8f);
+        disc = 0.f;
     }
-    else
+    s.dr = std::sqrt(disc);
+    s.kpos = 0.5f * (a + s.dr);
+    s.kneg = 0.5f * (a - s.dr);
+    REAL dr_safe = s.dr;
+    if (dr_safe < eps)
     {
-        ps = fp / ((fp / ktrans) - 1.f);
+        dr_safe = eps;
     }
-    if (!std::isfinite(ps) || ps < 0.f)
-    {
-        return 0.f;
-    }
-    REAL const tp = vp / (ps + fp);
-    if (!(tp > eps) || !std::isfinite(tp))
-    {
-        return 0.f;
-    }
-    for (std::size_t i = 1; i <= point_index; i++)
-    {
-        REAL const spacing = time[i] - time[i - 1];
-        REAL const delta_t = time[point_index] - time[i];
-        REAL const delta_t_prev = time[point_index] - time[i - 1];
-        REAL const ct
-            = cp[i]
-            * (fp * std::exp(-delta_t / tp) + ktrans * (1.f - std::exp(-delta_t / tp)));
-        REAL const ct_prev
-            = cp[i - 1]
-            * (fp * std::exp(-delta_t_prev / tp) + ktrans * (1.f - std::exp(-delta_t_prev / tp)));
-        if (!std::isfinite(ct) || !std::isfinite(ct_prev))
-        {
-            return 0.f;
-        }
-        convolution += (ct + ct_prev) * spacing / 2.f;
-    }
-    return convolution;
-}
-
-REAL two_compartment_exchange_get_value(
-    REAL const ktrans,
-    REAL const ve,
-    REAL const vp,
-    REAL const fp,
-    std::size_t const point_index,
-    REAL const * const time,
-    REAL const * const cp)
-{
-    REAL const eps = static_cast<REAL>(1e-12f);
-    if (!std::isfinite(ktrans) || !std::isfinite(ve) || !std::isfinite(vp) || !std::isfinite(fp))
-    {
-        return 0.f;
-    }
-    if (ktrans <= eps || ve <= eps || vp <= eps || fp <= eps)
-    {
-        return 0.f;
-    }
-
-    REAL ps = 0.f;
-    if (ktrans >= fp - eps)
-    {
-        ps = static_cast<REAL>(1e8f);
-    }
-    else
-    {
-        ps = fp / ((fp / ktrans) - 1.f);
-    }
-    if (!std::isfinite(ps) || ps <= 0.f)
-    {
-        return 0.f;
-    }
-
-    REAL convolution = 0.f;
-    REAL const tp = vp / (ps + fp);
-    REAL const te = ve / ps;
-    REAL const tb = vp / fp;
-    if (!(tp > eps) || !(te > eps) || !(tb > eps) || !std::isfinite(tp) || !std::isfinite(te) || !std::isfinite(tb))
-    {
-        return 0.f;
-    }
-    REAL const ksum = 1.f / tp + 1.f / te;
-    REAL root_arg = std::pow(ksum, 2) - 4.f * (1.f / te) * (1.f / tb);
-    if (!std::isfinite(root_arg))
-    {
-        return 0.f;
-    }
-    if (root_arg < 0.f)
-    {
-        root_arg = 0.f;
-    }
-    REAL const square_root_term = std::sqrt(root_arg);
-    REAL const kpos = 0.5f * (ksum + square_root_term);
-    REAL const kneg = 0.5f * (ksum - square_root_term);
-    REAL denom = (kpos - kneg);
-    if (std::abs(denom) < eps || !std::isfinite(denom))
-    {
-        denom = (denom >= 0.f) ? eps : -eps;
-    }
-    REAL const eneg = (kpos - 1.f / tb) / denom;
-    if (!std::isfinite(kpos) || !std::isfinite(kneg) || !std::isfinite(eneg))
-    {
-        return 0.f;
-    }
-
-    for (std::size_t i = 1; i <= point_index; i++)
-    {
-        REAL const spacing = time[i] - time[i - 1];
-        REAL const delta_t = time[point_index] - time[i];
-        REAL const delta_t_prev = time[point_index] - time[i - 1];
-        REAL const ct
-            = cp[i]
-            * (std::exp(-delta_t * kpos) + eneg * (std::exp(-delta_t * kneg) - std::exp(-delta_t * kpos)));
-        REAL const ct_prev
-            = cp[i - 1]
-            * (std::exp(-delta_t_prev * kpos) + eneg * (std::exp(-delta_t_prev * kneg) - std::exp(-delta_t_prev * kpos)));
-        if (!std::isfinite(ct) || !std::isfinite(ct_prev))
-        {
-            return 0.f;
-        }
-        convolution += (ct + ct_prev) * spacing / 2.f;
-    }
-    return fp * convolution;
+    s.eneg = (s.kpos - s.rb) / dr_safe;
+    s.ok = std::isfinite(s.kpos) && std::isfinite(s.kneg) && std::isfinite(s.eneg);
+    return s;
 }
 
 REAL t1_fa_exponential_get_value(
@@ -1050,40 +982,20 @@ void LMFitCPP::calc_derivatives_tofts(std::vector<REAL> & derivatives)
 
     REAL const ktrans = parameters_[0];
     REAL const ve = parameters_[1];
+    REAL const kappa = ktrans / ve;                 // kep
+
+    std::vector<REAL> g(info_.n_points_);
+    std::vector<REAL> gp(info_.n_points_);
+    exp_conv_recurrence(kappa, T, Cp, info_.n_points_, g.data(), gp.data());
 
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        REAL derivative_function = 0.f;
-        for (std::size_t i = 1; i <= point_index; i++)
-        {
-            REAL const spacing = T[i] - T[i - 1];
-            REAL const delta_t = T[point_index] - T[i];
-            REAL const delta_t_prev = T[point_index] - T[i - 1];
-            REAL const ct
-                = Cp[i]
-                * (1.f - ktrans / ve * delta_t)
-                * std::exp(-ktrans * delta_t / ve);
-            REAL const ct_prev
-                = Cp[i - 1]
-                * (1.f - ktrans / ve * delta_t_prev)
-                * std::exp(-ktrans * delta_t_prev / ve);
-            derivative_function += (ct + ct_prev) * spacing / 2.f;
-        }
-        derivatives[0 * info_.n_points_ + point_index] = derivative_function;
-
-        derivative_function = 0.f;
-        for (std::size_t i = 1; i <= point_index; i++)
-        {
-            REAL const spacing = T[i] - T[i - 1];
-            REAL const delta_t = T[point_index] - T[i];
-            REAL const delta_t_prev = T[point_index] - T[i - 1];
-            REAL const ct = Cp[i] * delta_t * std::exp(-ktrans * delta_t / ve);
-            REAL const ct_prev = Cp[i - 1] * delta_t_prev * std::exp(-ktrans * delta_t_prev / ve);
-            derivative_function += (ct + ct_prev) * spacing / 2.f;
-        }
-
+        // C = Ktrans * G(kappa),  kappa = Ktrans/ve
+        //   dC/dKtrans = G + (Ktrans/ve) * dG/dkappa
+        //   dC/dve     = -(Ktrans^2/ve^2) * dG/dkappa
+        derivatives[0 * info_.n_points_ + point_index] = g[point_index] + kappa * gp[point_index];
         derivatives[1 * info_.n_points_ + point_index]
-            = ktrans * ktrans / (ve * ve) * derivative_function;
+            = -(ktrans * ktrans) / (ve * ve) * gp[point_index];
     }
 }
 
@@ -1105,40 +1017,18 @@ void LMFitCPP::calc_derivatives_tofts_extended(std::vector<REAL> & derivatives)
     REAL const * const Cp = user_info_float + info_.n_points_;
     REAL const ktrans = parameters_[0];
     REAL const ve = parameters_[1];
+    REAL const kappa = ktrans / ve;                 // kep
+
+    std::vector<REAL> g(info_.n_points_);
+    std::vector<REAL> gp(info_.n_points_);
+    exp_conv_recurrence(kappa, T, Cp, info_.n_points_, g.data(), gp.data());
 
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        REAL derivative_function = 0.f;
-        for (std::size_t i = 1; i <= point_index; i++)
-        {
-            REAL const spacing = T[i] - T[i - 1];
-            REAL const delta_t = T[point_index] - T[i];
-            REAL const delta_t_prev = T[point_index] - T[i - 1];
-            REAL const ct
-                = Cp[i]
-                * (1.f - ktrans / ve * delta_t)
-                * std::exp(-ktrans * delta_t / ve);
-            REAL const ct_prev
-                = Cp[i - 1]
-                * (1.f - ktrans / ve * delta_t_prev)
-                * std::exp(-ktrans * delta_t_prev / ve);
-            derivative_function += (ct + ct_prev) * spacing / 2.f;
-        }
-        derivatives[0 * info_.n_points_ + point_index] = derivative_function;
-
-        derivative_function = 0.f;
-        for (std::size_t i = 1; i <= point_index; i++)
-        {
-            REAL const spacing = T[i] - T[i - 1];
-            REAL const delta_t = T[point_index] - T[i];
-            REAL const delta_t_prev = T[point_index] - T[i - 1];
-            REAL const ct = Cp[i] * delta_t * std::exp(-ktrans * delta_t / ve);
-            REAL const ct_prev = Cp[i - 1] * delta_t_prev * std::exp(-ktrans * delta_t_prev / ve);
-            derivative_function += (ct + ct_prev) * spacing / 2.f;
-        }
+        // C = Ktrans * G(kappa) + vp * Cp;  kappa = Ktrans/ve
+        derivatives[0 * info_.n_points_ + point_index] = g[point_index] + kappa * gp[point_index];
         derivatives[1 * info_.n_points_ + point_index]
-            = ktrans * ktrans / (ve * ve) * derivative_function;
-
+            = -(ktrans * ktrans) / (ve * ve) * gp[point_index];
         derivatives[2 * info_.n_points_ + point_index] = Cp[point_index];
     }
 }
@@ -1159,31 +1049,38 @@ void LMFitCPP::calc_derivatives_tissue_uptake(std::vector<REAL> & derivatives)
     REAL const * const user_info_float = reinterpret_cast<REAL const *>(user_info_);
     REAL const * const T = user_info_float;
     REAL const * const Cp = user_info_float + info_.n_points_;
+    // Reparameterized: parameter[0] = E = Ktrans/Fp, so rp = Fp/(vp(1-E)) = 1/Tp.
+    // C = E*Fp*U + Fp*(1-E)*G(rp).  Analytic Jacobian from the G' recurrence.
+    REAL const e = parameters_[0];
+    REAL const vp = parameters_[1];
+    REAL const fp = parameters_[2];
+    REAL const eps = static_cast<REAL>(1e-12f);
+    REAL const one_minus_e = 1.f - e;
+
+    if (!(e > eps) || !(e < 1.f - eps) || !(vp > eps) || !(fp > eps))
+    {
+        std::fill(derivatives.begin(), derivatives.end(), static_cast<REAL>(0.f));
+        return;
+    }
+
+    REAL const rp = fp / (vp * one_minus_e);
+    std::vector<REAL> g(info_.n_points_);
+    std::vector<REAL> gp(info_.n_points_);
+    std::vector<REAL> u(info_.n_points_);
+    exp_conv_recurrence(rp, T, Cp, info_.n_points_, g.data(), gp.data());
+    cumulative_trapz(T, Cp, info_.n_points_, u.data());
+
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        REAL const h0 = positive_centered_difference_step(parameters_[0]);
-        REAL f_plus_h = tissue_uptake_get_value(parameters_[0] + h0, parameters_[1], parameters_[2], point_index, T, Cp);
-        REAL f_minus_h = tissue_uptake_get_value(parameters_[0] - h0, parameters_[1], parameters_[2], point_index, T, Cp);
-        REAL f_plus_2h = tissue_uptake_get_value(parameters_[0] + 2.f * h0, parameters_[1], parameters_[2], point_index, T, Cp);
-        REAL f_minus_2h = tissue_uptake_get_value(parameters_[0] - 2.f * h0, parameters_[1], parameters_[2], point_index, T, Cp);
+        REAL const gk = g[point_index];
+        REAL const gpk = gp[point_index];
+        REAL const uk = u[point_index];
         derivatives[0 * info_.n_points_ + point_index]
-            = (f_minus_2h - 8.f * f_minus_h + 8.f * f_plus_h - f_plus_2h) / (12.f * h0);
-
-        REAL const h1 = positive_centered_difference_step(parameters_[1]);
-        f_plus_h = tissue_uptake_get_value(parameters_[0], parameters_[1] + h1, parameters_[2], point_index, T, Cp);
-        f_minus_h = tissue_uptake_get_value(parameters_[0], parameters_[1] - h1, parameters_[2], point_index, T, Cp);
-        f_plus_2h = tissue_uptake_get_value(parameters_[0], parameters_[1] + 2.f * h1, parameters_[2], point_index, T, Cp);
-        f_minus_2h = tissue_uptake_get_value(parameters_[0], parameters_[1] - 2.f * h1, parameters_[2], point_index, T, Cp);
+            = fp * uk - fp * gk + fp * rp * gpk;                               // dC/dE
         derivatives[1 * info_.n_points_ + point_index]
-            = (f_minus_2h - 8.f * f_minus_h + 8.f * f_plus_h - f_plus_2h) / (12.f * h1);
-
-        REAL const h2 = positive_centered_difference_step(parameters_[2]);
-        f_plus_h = tissue_uptake_get_value(parameters_[0], parameters_[1], parameters_[2] + h2, point_index, T, Cp);
-        f_minus_h = tissue_uptake_get_value(parameters_[0], parameters_[1], parameters_[2] - h2, point_index, T, Cp);
-        f_plus_2h = tissue_uptake_get_value(parameters_[0], parameters_[1], parameters_[2] + 2.f * h2, point_index, T, Cp);
-        f_minus_2h = tissue_uptake_get_value(parameters_[0], parameters_[1], parameters_[2] - 2.f * h2, point_index, T, Cp);
+            = -fp * one_minus_e * rp * gpk / vp;                              // dC/dvp
         derivatives[2 * info_.n_points_ + point_index]
-            = (f_minus_2h - 8.f * f_minus_h + 8.f * f_plus_h - f_plus_2h) / (12.f * h2);
+            = e * uk + one_minus_e * gk + one_minus_e * rp * gpk;             // dC/dFp
     }
 }
 
@@ -1203,39 +1100,75 @@ void LMFitCPP::calc_derivatives_two_compartment_exchange(std::vector<REAL> & der
     REAL const * const user_info_float = reinterpret_cast<REAL const *>(user_info_);
     REAL const * const T = user_info_float;
     REAL const * const Cp = user_info_float + info_.n_points_;
+    // Reparameterized: parameter[0] = E = Ktrans/Fp (PS = Fp*E/(1-E)); params (E, ve, vp, Fp).
+    // C = Fp * [ (1-Eneg)*Gpos + Eneg*Gneg ].  Analytic Jacobian via the G' recurrence plus
+    // O(1) scalar partials of the internal rates. See STATUS.md for the derivation.
+    REAL const e = parameters_[0];
+    REAL const ve = parameters_[1];
+    REAL const vp = parameters_[2];
+    REAL const fp = parameters_[3];
+    REAL const eps = static_cast<REAL>(1e-12f);
+
+    TwoCxmInternals const s = two_cxm_internals(e, ve, vp, fp);
+    if (!s.ok)
+    {
+        std::fill(derivatives.begin(), derivatives.end(), static_cast<REAL>(0.f));
+        return;
+    }
+
+    std::vector<REAL> gpos(info_.n_points_);
+    std::vector<REAL> gppos(info_.n_points_);
+    std::vector<REAL> gneg(info_.n_points_);
+    std::vector<REAL> gpneg(info_.n_points_);
+    exp_conv_recurrence(s.kpos, T, Cp, info_.n_points_, gpos.data(), gppos.data());
+    exp_conv_recurrence(s.kneg, T, Cp, info_.n_points_, gneg.data(), gpneg.data());
+
+    // O(1) scalar partials of {rp, re, rb} -> {a, c, Dr, Kpos, Kneg, Eneg} for each param.
+    REAL const one_minus_e = 1.f - e;
+    REAL const a = s.rp + s.re;
+    REAL dr_safe = s.dr;
+    if (dr_safe < eps)
+    {
+        dr_safe = eps;
+    }
+    // dPS/dparam: nonzero only for E and Fp.
+    REAL const dps[4] = { fp / (one_minus_e * one_minus_e), 0.f, 0.f, e / one_minus_e };
+    REAL d_kpos[4];
+    REAL d_kneg[4];
+    REAL d_eneg[4];
+    for (int p = 0; p < 4; p++)
+    {
+        REAL const is_ve = (p == 1) ? 1.f : 0.f;
+        REAL const is_vp = (p == 2) ? 1.f : 0.f;
+        REAL const is_fp = (p == 3) ? 1.f : 0.f;
+        REAL const drp = dps[p] / vp + is_fp / vp - is_vp * (s.ps + fp) / (vp * vp);
+        REAL const dre = dps[p] / ve - is_ve * s.ps / (ve * ve);
+        REAL const drb = is_fp / vp - is_vp * fp / (vp * vp);
+        REAL const da = drp + dre;
+        REAL const dc = dre * s.rb + s.re * drb;
+        REAL const ddr = (a * da - 2.f * dc) / dr_safe;
+        d_kpos[p] = 0.5f * (da + ddr);
+        d_kneg[p] = 0.5f * (da - ddr);
+        d_eneg[p] = ((d_kpos[p] - drb) * dr_safe - (s.kpos - s.rb) * ddr) / (dr_safe * dr_safe);
+    }
+
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        REAL const h0 = positive_centered_difference_step(parameters_[0]);
-        REAL f_plus_h = two_compartment_exchange_get_value(parameters_[0] + h0, parameters_[1], parameters_[2], parameters_[3], point_index, T, Cp);
-        REAL f_minus_h = two_compartment_exchange_get_value(parameters_[0] - h0, parameters_[1], parameters_[2], parameters_[3], point_index, T, Cp);
-        REAL f_plus_2h = two_compartment_exchange_get_value(parameters_[0] + 2.f * h0, parameters_[1], parameters_[2], parameters_[3], point_index, T, Cp);
-        REAL f_minus_2h = two_compartment_exchange_get_value(parameters_[0] - 2.f * h0, parameters_[1], parameters_[2], parameters_[3], point_index, T, Cp);
-        derivatives[0 * info_.n_points_ + point_index]
-            = (f_minus_2h - 8.f * f_minus_h + 8.f * f_plus_h - f_plus_2h) / (12.f * h0);
-
-        REAL const h1 = positive_centered_difference_step(parameters_[1]);
-        f_plus_h = two_compartment_exchange_get_value(parameters_[0], parameters_[1] + h1, parameters_[2], parameters_[3], point_index, T, Cp);
-        f_minus_h = two_compartment_exchange_get_value(parameters_[0], parameters_[1] - h1, parameters_[2], parameters_[3], point_index, T, Cp);
-        f_plus_2h = two_compartment_exchange_get_value(parameters_[0], parameters_[1] + 2.f * h1, parameters_[2], parameters_[3], point_index, T, Cp);
-        f_minus_2h = two_compartment_exchange_get_value(parameters_[0], parameters_[1] - 2.f * h1, parameters_[2], parameters_[3], point_index, T, Cp);
-        derivatives[1 * info_.n_points_ + point_index]
-            = (f_minus_2h - 8.f * f_minus_h + 8.f * f_plus_h - f_plus_2h) / (12.f * h1);
-
-        REAL const h2 = positive_centered_difference_step(parameters_[2]);
-        f_plus_h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2] + h2, parameters_[3], point_index, T, Cp);
-        f_minus_h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2] - h2, parameters_[3], point_index, T, Cp);
-        f_plus_2h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2] + 2.f * h2, parameters_[3], point_index, T, Cp);
-        f_minus_2h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2] - 2.f * h2, parameters_[3], point_index, T, Cp);
-        derivatives[2 * info_.n_points_ + point_index]
-            = (f_minus_2h - 8.f * f_minus_h + 8.f * f_plus_h - f_plus_2h) / (12.f * h2);
-
-        REAL const h3 = positive_centered_difference_step(parameters_[3]);
-        f_plus_h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2], parameters_[3] + h3, point_index, T, Cp);
-        f_minus_h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2], parameters_[3] - h3, point_index, T, Cp);
-        f_plus_2h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2], parameters_[3] + 2.f * h3, point_index, T, Cp);
-        f_minus_2h = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2], parameters_[3] - 2.f * h3, point_index, T, Cp);
-        derivatives[3 * info_.n_points_ + point_index]
-            = (f_minus_2h - 8.f * f_minus_h + 8.f * f_plus_h - f_plus_2h) / (12.f * h3);
+        REAL const gp_v = gpos[point_index];
+        REAL const gn_v = gneg[point_index];
+        REAL const gpp_v = gppos[point_index];
+        REAL const gpn_v = gpneg[point_index];
+        for (int p = 0; p < 4; p++)
+        {
+            REAL col = fp * (d_eneg[p] * (gn_v - gp_v)
+                             + (1.f - s.eneg) * gpp_v * d_kpos[p]
+                             + s.eneg * gpn_v * d_kneg[p]);
+            if (p == 3)     // extra explicit-Fp term
+            {
+                col += (1.f - s.eneg) * gp_v + s.eneg * gn_v;
+            }
+            derivatives[static_cast<std::size_t>(p) * info_.n_points_ + point_index] = col;
+        }
     }
 }
 
@@ -1795,9 +1728,15 @@ void LMFitCPP::calc_values_tofts(std::vector<REAL>& values)
     REAL const * const T = user_info_float;
     REAL const * const Cp = user_info_float + info_.n_points_;
 
+    REAL const ktrans = parameters_[0];
+    REAL const ve = parameters_[1];
+    REAL const kappa = ktrans / ve;                 // kep
+
+    std::vector<REAL> g(info_.n_points_);
+    exp_conv_recurrence(kappa, T, Cp, info_.n_points_, g.data(), nullptr);
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        values[point_index] = tofts_get_value(parameters_[0], parameters_[1], point_index, T, Cp);
+        values[point_index] = ktrans * g[point_index];
     }
 }
 
@@ -1818,9 +1757,16 @@ void LMFitCPP::calc_values_tofts_extended(std::vector<REAL>& values)
     REAL const * const T = user_info_float;
     REAL const * const Cp = user_info_float + info_.n_points_;
 
+    REAL const ktrans = parameters_[0];
+    REAL const ve = parameters_[1];
+    REAL const vp = parameters_[2];
+    REAL const kappa = ktrans / ve;                 // kep
+
+    std::vector<REAL> g(info_.n_points_);
+    exp_conv_recurrence(kappa, T, Cp, info_.n_points_, g.data(), nullptr);
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        values[point_index] = tofts_extended_get_value(parameters_[0], parameters_[1], parameters_[2], point_index, T, Cp);
+        values[point_index] = ktrans * g[point_index] + vp * Cp[point_index];
     }
 }
 
@@ -1841,9 +1787,27 @@ void LMFitCPP::calc_values_tissue_uptake(std::vector<REAL>& values)
     REAL const * const T = user_info_float;
     REAL const * const Cp = user_info_float + info_.n_points_;
 
+    // parameter[0] = E = Ktrans/Fp;  C = E*Fp*U + Fp*(1-E)*G(rp), rp = Fp/(vp(1-E)).
+    REAL const e = parameters_[0];
+    REAL const vp = parameters_[1];
+    REAL const fp = parameters_[2];
+    REAL const eps = static_cast<REAL>(1e-12f);
+    REAL const one_minus_e = 1.f - e;
+
+    if (!(e > eps) || !(e < 1.f - eps) || !(vp > eps) || !(fp > eps))
+    {
+        std::fill(values.begin(), values.end(), static_cast<REAL>(0.f));
+        return;
+    }
+
+    REAL const rp = fp / (vp * one_minus_e);
+    std::vector<REAL> g(info_.n_points_);
+    std::vector<REAL> u(info_.n_points_);
+    exp_conv_recurrence(rp, T, Cp, info_.n_points_, g.data(), nullptr);
+    cumulative_trapz(T, Cp, info_.n_points_, u.data());
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        values[point_index] = tissue_uptake_get_value(parameters_[0], parameters_[1], parameters_[2], point_index, T, Cp);
+        values[point_index] = e * fp * u[point_index] + fp * one_minus_e * g[point_index];
     }
 }
 
@@ -1864,9 +1828,27 @@ void LMFitCPP::calc_values_two_compartment_exchange(std::vector<REAL>& values)
     REAL const * const T = user_info_float;
     REAL const * const Cp = user_info_float + info_.n_points_;
 
+    // parameter[0] = E = Ktrans/Fp;  C = Fp * [ (1-Eneg)*Gpos + Eneg*Gneg ].
+    REAL const e = parameters_[0];
+    REAL const ve = parameters_[1];
+    REAL const vp = parameters_[2];
+    REAL const fp = parameters_[3];
+
+    TwoCxmInternals const s = two_cxm_internals(e, ve, vp, fp);
+    if (!s.ok)
+    {
+        std::fill(values.begin(), values.end(), static_cast<REAL>(0.f));
+        return;
+    }
+
+    std::vector<REAL> gpos(info_.n_points_);
+    std::vector<REAL> gneg(info_.n_points_);
+    exp_conv_recurrence(s.kpos, T, Cp, info_.n_points_, gpos.data(), nullptr);
+    exp_conv_recurrence(s.kneg, T, Cp, info_.n_points_, gneg.data(), nullptr);
     for (std::size_t point_index = 0; point_index < info_.n_points_; point_index++)
     {
-        values[point_index] = two_compartment_exchange_get_value(parameters_[0], parameters_[1], parameters_[2], parameters_[3], point_index, T, Cp);
+        values[point_index]
+            = fp * ((1.f - s.eneg) * gpos[point_index] + s.eneg * gneg[point_index]);
     }
 }
 

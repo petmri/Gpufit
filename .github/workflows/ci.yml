@@ -214,6 +214,16 @@ jobs:
             cat CMakeFiles/CMakeError.log
             echo "----"
           fi
+          if [[ -f "CMakeFiles/CMakeConfigureLog.yaml" ]]; then
+            echo "---- CMakeFiles/CMakeConfigureLog.yaml (CUDA-related entries only)"
+            awk '
+              /^  -$/ { if (keep && buf != "") print buf; buf=""; keep=0; buf=$0 ORS; next }
+              { buf = buf $0 ORS }
+              /[Cc][Uu][Dd][Aa]/ { keep=1 }
+              END { if (keep && buf != "") print buf }
+            ' CMakeFiles/CMakeConfigureLog.yaml || true
+            echo "----"
+          fi
 
 
       - name: Build

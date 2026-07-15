@@ -127,9 +127,8 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit-w
         with:
-          sub-packages: '["nvcc", "cublas", "curand", "nvrtc", "cudart"]'
           cuda: ${{ matrix.cuda }}
-          method: network
+          method: local
 
       - name: Export CUDA path from installer (Windows)
         if: runner.os == 'Windows' && matrix.with_cuda
@@ -152,6 +151,22 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1.13.0
         with:
           arch: x64
+
+      - name: Deprioritize Git usr/bin in PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Git for Windows ships a POSIX `link` utility (hard-link creation) at
+          # usr/bin/link.exe that collides by name with MSVC's linker. CMake's
+          # CUDA-only CheckLanguage sub-project has no CXX compiler context to
+          # anchor its linker search, so it can resolve to Git's link.exe instead
+          # of MSVC's, failing with "link: unknown option -- L". Push usr/bin to
+          # the end of PATH (not remove it -- later bash steps still need its
+          # coreutils) so MSVC/CUDA/ninja are always found first.
+          $gitUsrBin = 'C:\Program Files\Git\usr\bin'
+          $parts = $env:PATH -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $gitUsrBin.TrimEnd('\')) }
+          $newPath = ($parts -join ';') + ';' + $gitUsrBin
+          Add-Content -Path $env:GITHUB_ENV -Value "PATH=$newPath"
 
       - name: Verify Ninja is available (Windows)
         if: runner.os == 'Windows'

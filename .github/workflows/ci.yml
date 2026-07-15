@@ -152,7 +152,7 @@ jobs:
         with:
           arch: x64
 
-      - name: Deprioritize Git usr/bin in PATH (Windows)
+      - name: Disable Git's link.exe (collides with MSVC linker)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -160,13 +160,16 @@ jobs:
           # usr/bin/link.exe that collides by name with MSVC's linker. CMake's
           # CUDA-only CheckLanguage sub-project has no CXX compiler context to
           # anchor its linker search, so it can resolve to Git's link.exe instead
-          # of MSVC's, failing with "link: unknown option -- L". Push usr/bin to
-          # the end of PATH (not remove it -- later bash steps still need its
-          # coreutils) so MSVC/CUDA/ninja are always found first.
-          $gitUsrBin = 'C:\Program Files\Git\usr\bin'
-          $parts = $env:PATH -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $gitUsrBin.TrimEnd('\')) }
-          $newPath = ($parts -join ';') + ';' + $gitUsrBin
-          Add-Content -Path $env:GITHUB_ENV -Value "PATH=$newPath"
+          # of MSVC's, failing with "link: unknown option -- L". Reordering PATH
+          # around it proved fragile (it confused a nested vcvarsall.bat
+          # re-invocation triggered by CMake's CUDA compiler-id detection, which
+          # then failed to find cl.exe at all). Renaming the one conflicting file
+          # is simpler and can't be found by any search regardless of PATH order;
+          # this is an ephemeral CI VM so there's no lasting effect.
+          $gitLink = 'C:\Program Files\Git\usr\bin\link.exe'
+          if (Test-Path $gitLink) {
+            Rename-Item -Path $gitLink -NewName 'link.exe.disabled-by-ci'
+          }
 
       - name: Verify Ninja is available (Windows)
         if: runner.os == 'Windows'

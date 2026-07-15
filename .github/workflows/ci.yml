@@ -127,9 +127,10 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit-w
         with:
-          sub-packages: '["nvcc", "cublas", "curand", "nvrtc", "cudart"]'
           cuda: ${{ matrix.cuda }}
-          method: network
+          # method:network + a restricted sub-packages list silently omits
+          # include/crt/ (Jimver/cuda-toolkit#437); local installs everything.
+          method: local
 
       - name: Export CUDA path from installer (Windows)
         if: runner.os == 'Windows' && matrix.with_cuda
@@ -152,6 +153,17 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1.13.0
         with:
           arch: x64
+
+      - name: Disable Git's link.exe (collides with MSVC linker)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Git's usr/bin/link.exe (hard-link tool) shadows MSVC's linker under
+          # shell: bash (ilammy/msvc-dev-cmd#25); renaming it is the recommended fix.
+          $gitLink = 'C:\Program Files\Git\usr\bin\link.exe'
+          if (Test-Path $gitLink) {
+            Rename-Item -Path $gitLink -NewName 'link.exe.disabled-by-ci'
+          }
 
       - name: Verify Ninja is available (Windows)
         if: runner.os == 'Windows'
@@ -212,6 +224,18 @@ jobs:
           if [[ -f "CMakeFiles/CMakeError.log" ]]; then
             echo "---- CMakeFiles/CMakeError.log"
             cat CMakeFiles/CMakeError.log
+            echo "----"
+          fi
+          if [[ -f "CMakeFiles/CMakeConfigureLog.yaml" ]]; then
+            # check_language() failures land here, not in CMakeError.log; filtered
+            # to CUDA entries since the full file can run tens of thousands of lines.
+            echo "---- CMakeFiles/CMakeConfigureLog.yaml (CUDA-related entries only)"
+            awk '
+              /^  -$/ { if (keep && buf != "") print buf; buf=""; keep=0; buf=$0 ORS; next }
+              { buf = buf $0 ORS }
+              /[Cc][Uu][Dd][Aa]/ { keep=1 }
+              END { if (keep && buf != "") print buf }
+            ' CMakeFiles/CMakeConfigureLog.yaml || true
             echo "----"
           fi
 

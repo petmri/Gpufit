@@ -24,6 +24,12 @@
 * finished: An input vector which allows the calculation to be skipped for single
 *           fits.
 *
+* skip: An optional input vector which allows the calculation to be skipped for
+*       single fits, or NULL for no additional skipping. Used by the constrained
+*       backtracking line search to avoid recomputing the model for fits that
+*       already accepted a step, whose parameters are then held fixed by
+*       cuda_update_parameters_trial for the rest of the search.
+*
 * values: An output vector of concatenated sets of model function values.
 *
 * derivatives: An output vector of concatenated sets of model function partial
@@ -59,6 +65,7 @@
 *       n_points,
 *       n_parameters,
 *       finished,
+*       skip,
 *       values,
 *       derivatives,
 *       n_fits_per_block,
@@ -76,6 +83,7 @@ __global__ void cuda_calc_curve_values(
     int const n_points,
     int const n_parameters,
     int const * finished,
+    int const * skip,
     REAL * values,
     REAL * derivatives,
     int const n_fits_per_block,
@@ -96,6 +104,9 @@ __global__ void cuda_calc_curve_values(
     REAL const * current_parameters = parameters + fit_index * n_parameters;
 
     if (finished[fit_index])
+        return;
+    // No __syncthreads() below, so an early return on part of a block is safe here.
+    if (skip && skip[fit_index])
         return;
     if (point_index >= n_points)
         return;

@@ -75,7 +75,9 @@ public:
     void run();
 
 private:
-	void calc_curve_values();
+	// skip: optional per-fit mask (NULL for none), used by the backtracking line
+	// search to leave already-accepted fits alone. See constrained_backtracking_step.
+	void calc_curve_values(int const * skip = 0);
     void calc_chi_squares();
     void calc_gradients();
     void calc_hessians();

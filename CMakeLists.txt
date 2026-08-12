@@ -15,7 +15,7 @@ if( APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET )
 endif()
 
 if( NOT PROJECT_NAME )
-  project( Gpufit VERSION 1.5.0 LANGUAGES CXX )
+  project( Gpufit VERSION 1.5.1 LANGUAGES CXX )
   include( CTest )
 endif()
 

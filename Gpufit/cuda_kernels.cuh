@@ -93,6 +93,7 @@ extern __global__ void cuda_calc_curve_values(
     int const n_points,
     int const n_parameters,
     int const * finished,
+    int const * skip,
     REAL * values,
     REAL * derivatives,
     int const n_fits_per_block,

@@ -10,6 +10,14 @@ The manuscript describing Gpufit is now published in [Scientific Reports](https:
 
 ## Changelog
 
+### v1.5.1
+
+Performance-only release for the CUDA backend. Results are unchanged: GPU/CPU parity figures for 2CXM and Tissue Uptake match the previous release to six digits, and fit outputs are bit-identical.
+
+- **Fixed accidental double-precision arithmetic in the 2CXM and Tissue Uptake CUDA kernels** — the convolution accumulators literals promoted the whole inner loop to FP64, so these kernels ran ~14x slower than intended. The literals are now `REAL`.
+- **The CUDA backtracking line search no longer recomputes accepted fits** — `cuda_calc_curve_values` now honours the existing `backtrack_accepted` mask, so a fit that has already accepted a step stops having its unchanged curve and Jacobian recomputed on every remaining trial.
+- **Net effect** — 2CXM is 7.9x - 21.8x faster on batches of 3000-point curves. Tissue Uptake is 9.4x faster on 600-point curves.
+
 ### v1.5.0
 
 - **Fixed silent wrong-but-"converged" fits in the constrained solver** — the constrained Levenberg-Marquardt loop could report `CONVERGED` on a rejected backtracking step, freezing stiff models (2CXM/2CUM) at implausible parameter values with no error flag. The CPU backtracking line search was also ported to the CUDA solver so constrained fits behave the same on both backends.

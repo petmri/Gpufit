@@ -33,7 +33,7 @@ __device__ void calculate_tissue_uptake (               // function name
 	REAL const E = parameters[0];
 	REAL const vp = parameters[1];
 	REAL const Fp = parameters[2];
-	REAL const eps = 1e-12;
+	REAL const eps = (REAL)1e-12f;
 	REAL const oneME = 1 - E;
 
 	REAL * current_derivative = derivative + point_index;
@@ -61,9 +61,11 @@ __device__ void calculate_tissue_uptake (               // function name
 		REAL const lag_prev = T[point_index] - T[i - 1];
 		REAL const e_i = exp(-rp * lag);
 		REAL const e_p = exp(-rp * lag_prev);
-		G  += 0.5 * spacing * (Cp[i] * e_i + Cp[i - 1] * e_p);
-		Gp += 0.5 * spacing * (Cp[i] * (-lag) * e_i + Cp[i - 1] * (-lag_prev) * e_p);
-		U  += 0.5 * spacing * (Cp[i] + Cp[i - 1]);
+		// Literals must stay REAL: a bare 0.5 promotes the accumulation to double, which is
+		// correct but ~14x slower on consumer GPUs (1/64 FP64 rate). Same in 2cxm.
+		G  += (REAL)0.5f * spacing * (Cp[i] * e_i + Cp[i - 1] * e_p);
+		Gp += (REAL)0.5f * spacing * (Cp[i] * (-lag) * e_i + Cp[i - 1] * (-lag_prev) * e_p);
+		U  += (REAL)0.5f * spacing * (Cp[i] + Cp[i - 1]);
 	}
 
 	value[point_index] = E * Fp * U + Fp * oneME * G;

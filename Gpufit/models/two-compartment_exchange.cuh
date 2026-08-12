@@ -35,7 +35,7 @@ __device__ void calculate_two_compartment_exchange (               // function n
 	REAL const ve = parameters[1];
 	REAL const vp = parameters[2];
 	REAL const Fp = parameters[3];
-	REAL const eps = 1e-12;
+	REAL const eps = (REAL)1e-12f;
 	REAL const oneME = 1 - E;
 
 	REAL * current_derivative = derivative + point_index;
@@ -54,8 +54,8 @@ __device__ void calculate_two_compartment_exchange (               // function n
 		REAL disc = a * a - 4 * c;
 		if (!(disc > 0)) disc = 0;
 		dr = sqrt(disc);
-		kpos = 0.5 * (a + dr);
-		kneg = 0.5 * (a - dr);
+		kpos = (REAL)0.5f * (a + dr);
+		kneg = (REAL)0.5f * (a - dr);
 		dr_safe = (dr < eps) ? eps : dr;
 		eneg = (kpos - rb) / dr_safe;
 	}
@@ -80,10 +80,12 @@ __device__ void calculate_two_compartment_exchange (               // function n
 		REAL const ep_p = exp(-kpos * lag_prev);
 		REAL const en_i = exp(-kneg * lag);
 		REAL const en_p = exp(-kneg * lag_prev);
-		Gpos  += 0.5 * spacing * (Cp[i] * ep_i + Cp[i - 1] * ep_p);
-		Gppos += 0.5 * spacing * (Cp[i] * (-lag) * ep_i + Cp[i - 1] * (-lag_prev) * ep_p);
-		Gneg  += 0.5 * spacing * (Cp[i] * en_i + Cp[i - 1] * en_p);
-		Gpneg += 0.5 * spacing * (Cp[i] * (-lag) * en_i + Cp[i - 1] * (-lag_prev) * en_p);
+		// Literals must stay REAL: a bare 0.5 promotes the accumulation to double, which is
+		// correct but ~14x slower on consumer GPUs (1/64 FP64 rate). Same in tissue_uptake.
+		Gpos  += (REAL)0.5f * spacing * (Cp[i] * ep_i + Cp[i - 1] * ep_p);
+		Gppos += (REAL)0.5f * spacing * (Cp[i] * (-lag) * ep_i + Cp[i - 1] * (-lag_prev) * ep_p);
+		Gneg  += (REAL)0.5f * spacing * (Cp[i] * en_i + Cp[i - 1] * en_p);
+		Gpneg += (REAL)0.5f * spacing * (Cp[i] * (-lag) * en_i + Cp[i - 1] * (-lag_prev) * en_p);
 	}
 
 	value[point_index] = Fp * ((1 - eneg) * Gpos + eneg * Gneg);
@@ -101,9 +103,9 @@ __device__ void calculate_two_compartment_exchange (               // function n
 		REAL const drb = is_fp / vp - is_vp * Fp / (vp * vp);
 		REAL const da = drp + dre;
 		REAL const dc = dre * rb + re * drb;
-		REAL const ddr = (a * da - 2 * dc) / dr_safe;
-		REAL const dkpos = 0.5 * (da + ddr);
-		REAL const dkneg = 0.5 * (da - ddr);
+		REAL const ddr = (a * da - (REAL)2.0f * dc) / dr_safe;
+		REAL const dkpos = (REAL)0.5f * (da + ddr);
+		REAL const dkneg = (REAL)0.5f * (da - ddr);
 		REAL const deneg = ((dkpos - drb) * dr_safe - (kpos - rb) * ddr) / (dr_safe * dr_safe);
 		REAL col = Fp * (deneg * (Gneg - Gpos) + (1 - eneg) * Gppos * dkpos + eneg * Gpneg * dkneg);
 		if (p == 3)     // extra explicit-Fp term
